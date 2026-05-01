@@ -13,6 +13,7 @@ Rice/         # anything tagged `rice-dish`
 Soup/         # anything tagged `soup`
 Salads/       # salad recipes
 Sides/        # side dishes (e.g. hummus)
+Desserts/     # sweet courses (e.g. tiramisu)
 Vegetarian/   # vegetarian dishes (beans, lentils, egg, cheese-not-pizza, vegetables)
 Pantry/       # non-recipe "staples" lists (workaround for Cook iOS app's lack of ad-hoc items)
 config/       # Cook CLI config: aisle.conf (and planned pantry.conf)
