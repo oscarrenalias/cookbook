@@ -110,7 +110,7 @@ Tag semantics:
 ```
 
 - Singular names: `egg`, not `eggs`.
-- Units: `g`, `kg`, `ml`, `l`, `tsp`, `tbsp`, `piece`, `minutes`/`min`.
+- Units: `g`, `kg`, `ml`, `l`, `tsp`, `tbsp`, `piece`, `can`, `minutes`/`min`. Use `can` for canned goods (tomatoes, beans, coconut milk, chickpeas, etc.) and note the can size in parentheses, e.g. `@canned tomatoes{2%can}` (400 g each).
 - Empty quantity `{}` is fine for "to taste" or serving-side ingredients.
 - Put preparation in parentheses *after* the ingredient (`(grated)`, `(finely chopped)`) instead of folding it into the name.
 
