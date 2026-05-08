@@ -1,0 +1,20 @@
+---
+servings: 5
+---
+
+==Day 0==
+Dinner:
+-- sample plan — exercises Mode B end-to-end
+@./Pasta/Pasta Bolognese{5%servings}
+
+==Day 1==
+Dinner:
+@./Meat/Chicken Stir Fry{5%servings}
+
+==Batch Prep==
+Lunch:
+-- Mon-Fri lunches, batch-cook on Sunday
+@./Vegetarian/Tandoori Confit Chickpeas{10%servings}
+
+==Dairy Staples==
+@./Pantry/Dairy Staples{1%batch}

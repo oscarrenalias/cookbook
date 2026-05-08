@@ -73,6 +73,53 @@ cook doctor aisle
 
 This reports ingredients not categorized in `aisle.conf`.
 
+### Step 6: Cookbook-mandatory metadata audit
+
+`cook doctor validate` covers Cooklang syntax but does **not** know about the controlled-vocabulary fields the iOS Cookbook app uses for filtering. After Step 4, run a frontmatter audit so recipes don't silently disappear from the app's Cuisine / Protein / Course / Difficulty pickers.
+
+The skill ships a Python script — `audit-frontmatter.py`, sitting alongside this `SKILL.md` — that checks every `.cook` file's YAML frontmatter against the keys mandated by the cookbook's CLAUDE.md.
+
+```bash
+# Walk the entire repo from the cookbook root
+<skill>/audit-frontmatter.py --root .
+
+# Or audit specific files
+<skill>/audit-frontmatter.py "Meat/Roasted Pork Fillet.cook"
+
+# --strict additionally enforces controlled-vocabulary values
+<skill>/audit-frontmatter.py --root . --strict
+```
+
+The script:
+- Uses the standard library only (no dependencies).
+- Reports each issue as `<path>: <reason>` on stdout, one per line.
+- Exits non-zero if any issue is found (CI-friendly).
+- With `--strict`, additionally enforces:
+  - `difficulty` ∈ `{easy, medium, involved}`
+  - `course` ∈ `{breakfast, lunch, dinner, snack, side, dessert}`
+  - `protein` ∈ the CLAUDE.md vocabulary
+  - `cuisine` ∈ the CLAUDE.md vocabulary
+  - `tags` — every entry must be from CLAUDE.md's tag vocabulary; unknown tags are flagged with the offending list
+  - `servings` is numeric
+  - **filename ↔ title invariant** — the file's stem (e.g. `Roasted Pork Fillet`) must equal the frontmatter `title:` value exactly
+
+Required keys checked by default (per cookbook CLAUDE.md):
+
+| Field | Required | Allowed values |
+|---|---|---|
+| `title` | yes | matches the filename's stem |
+| `servings` | yes | numeric |
+| `prep time` | yes | text (e.g. `15 minutes`) |
+| `cook time` | yes | text |
+| `difficulty` | yes | `easy`, `medium`, `involved` |
+| `cuisine` | yes | per CLAUDE.md vocabulary |
+| `protein` | yes | per CLAUDE.md vocabulary |
+| `course` | yes | `breakfast`, `lunch`, `dinner`, `snack`, `side`, `dessert` |
+| `tags` | yes | YAML list |
+| `equipment` | yes | YAML list |
+
+For each hit, either fix the recipe (preferred) or report to the user. Files written without these keys still parse via Cook CLI, but they fall out of the iOS app's filter picker corpus and become unfilterable from the Recipes tab.
+
 ## Examples
 
 **User:** "Validate my recipes"
@@ -117,6 +164,8 @@ Checked 24 recipes: 1 error, 1 warning, 1 suggestion
 | Deprecated metadata | Using `>>` syntax | Convert to YAML frontmatter |
 | Broken reference | Recipe file not found | Check path in `@./path/Recipe{}` |
 | Invalid timer | Bad format | Use `~{15%minutes}` |
+| Wrong section syntax in recipe body | Using `==…==` in a `.cook` file | Replace with single-equals `=Section Name` (`==…==` is `.menu`-file syntax only) |
+| Missing iOS-filter metadata | No `cuisine` / `protein` / `course` / `difficulty` | Recipe still parses but disappears from the iOS app's filter pickers — see Step 6 above |
 
 ### Strict Mode
 

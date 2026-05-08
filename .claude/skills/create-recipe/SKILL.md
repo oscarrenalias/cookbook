@@ -44,24 +44,33 @@ Ask: "How would you like to create this recipe?"
 
 Create a `.cook` file with:
 
-1. **YAML frontmatter** (always use `---` delimiters, never `>>` syntax):
+1. **YAML frontmatter** (always use `---` delimiters, never `>>` syntax). Include all keys mandated by the cookbook's CLAUDE.md so the recipe surfaces in the iOS app's filters (Cuisine / Protein / Course / Difficulty):
 ```yaml
 ---
 title: Recipe Name
 servings: 4
-time: 30 minutes
 prep time: 10 minutes
 cook time: 20 minutes
-tags: [cuisine, meal-type]
-source: (if provided)
+difficulty: easy
+cuisine: italian
+protein: chicken
+course: dinner
+tags:
+  - weekday
+  - kid-friendly
+equipment:
+  - frying pan
+  - mixing bowl
 ---
 ```
+
+Allowed values for the controlled-vocabulary fields are listed in the cookbook's CLAUDE.md (`difficulty`, `course`, `protein`, `cuisine`). Pick from the allowed set rather than inventing new values, otherwise the recipe drops out of the iOS app's filter pickers.
 
 2. **Recipe body** with proper Cooklang markup:
 - Ingredients: `@ingredient{quantity%unit}` or `@multi word ingredient{}`
 - Cookware: `#pan{}` or `#large mixing bowl{}`
 - Timers: `~{15%minutes}`
-- Sections for complex recipes: `= Section Name`
+- Sections for complex recipes: `=Section Name` (single equals; **never** use `==…==` in a recipe body — that's `.menu` file syntax)
 - Steps as separate paragraphs (blank line between each)
 
 ### Step 4: Refine Interactively
@@ -76,10 +85,28 @@ Make requested changes.
 ### Step 5: Save File
 
 Ask for the save location:
-- Suggest: `<recipe-name>.cook` in current directory
+- Suggest: `<Folder>/<Recipe Name>.cook` in the matching category folder per the cookbook's CLAUDE.md (Repository layout)
 - Or let user specify path
 
 Write the file.
+
+### Step 6: Validate
+
+**Always** verify the saved file parses cleanly before declaring the recipe done. The drafting step is creative; this step is deterministic. Run:
+
+```sh
+cook recipe read "<saved path>"
+```
+
+Interpret the result:
+
+- **Exit code 0, output rendered to stdout** — the recipe parses. The skill is done; tell the user the file was saved and validated, and offer to render or scale it next.
+- **Exit code non-zero, error message on stderr** — the recipe failed to parse. Read the error (it usually points to a line number and a CookLang construct), fix the file, and re-run `cook recipe read`. Don't tell the user the recipe is "done" until this command succeeds.
+- **Exit code 0 but stderr contains warnings** — the recipe parses but has lint-like issues (deprecated syntax, suspicious constructs). Surface the warnings to the user verbatim and offer to fix each one.
+
+**Why not `cook doctor validate`?** That command runs against the entire collection, not a single file, so it's the wrong tool for incremental validation when creating a new recipe. The full collection-wide audit lives in the `validate-recipes` skill.
+
+If the file fails validation and the agent can't fix it (e.g. genuinely malformed frontmatter, ambiguous quantity), surface the error to the user with the offending file path and the relevant error line — do not silently leave a broken recipe on disk.
 
 ## Examples
 
@@ -91,15 +118,23 @@ Write the file.
 ---
 title: Simple Pancakes
 servings: 4
-time: 20 minutes
 prep time: 5 minutes
 cook time: 15 minutes
-tags: [breakfast, quick]
+difficulty: easy
+cuisine: american
+protein: egg
+course: breakfast
+tags:
+  - quick
+  - kid-friendly
+equipment:
+  - non-stick pan
+  - mixing bowl
 ---
 
 Combine @flour{200%g}, @sugar{2%tbsp}, @baking powder{2%tsp}, and @salt{1/2%tsp} in a #large mixing bowl{}.
 
-In a separate bowl, whisk @eggs{2}, @milk{240%ml}, and @melted butter{30%g}.
+In a separate bowl, whisk @egg{2}, @milk{240%ml}, and @melted butter{30%g}.
 
 Pour wet ingredients into dry ingredients and stir until just combined. Small lumps are okay.
 
@@ -107,7 +142,7 @@ Heat a #non-stick pan{} over medium heat. Pour ~1/4 cup batter per pancake.
 
 Cook until bubbles form on surface, about ~{2%minutes}. Flip and cook another ~{1%minute}.
 
-Serve warm with your favorite toppings.
+Serve warm with your favourite toppings.
 ```
 
 **User input:**
@@ -121,14 +156,25 @@ Serve warm with your favorite toppings.
 ---
 title: Spaghetti Carbonara
 servings: 2
-tags: [pasta, italian, dinner]
+prep time: 5 minutes
+cook time: 15 minutes
+difficulty: medium
+cuisine: italian
+protein: egg
+course: dinner
+tags:
+  - pasta-dish
+  - quick
+equipment:
+  - large pot
+  - frying pan
 ---
 
 Cook @spaghetti{200%g} in a #large pot{} of salted boiling water until al dente, about ~{10%minutes}.
 
-While pasta cooks, cut @pancetta{100%g} into small cubes and fry in a #pan{} until crispy.
+While pasta cooks, cut @pancetta{100%g} into small cubes and fry in a #frying pan{} until crispy.
 
-In a bowl, whisk @eggs{2} with @parmesan{50%g}(finely grated) and @black pepper{}(freshly ground).
+In a bowl, whisk @egg{2} with @parmesan{50%g}(finely grated) and @black pepper{}(freshly ground).
 
 Reserve ~1/2 cup pasta water, then drain the spaghetti.
 
@@ -143,17 +189,22 @@ Serve immediately with extra parmesan and black pepper.
 
 ### Cooklang Syntax Quick Reference
 
-**Metadata** (YAML frontmatter - always use this format):
+**Metadata** (YAML frontmatter - always use this format). The full mandated set is in the cookbook's CLAUDE.md; the structure below is the minimum the iOS app's filters expect:
 ```yaml
 ---
 title: Recipe Name
 servings: 4
-time: 30 minutes
 prep time: 10 minutes
 cook time: 20 minutes
-tags: [tag1, tag2]
-source: https://example.com
-author: Name
+difficulty: easy
+cuisine: italian
+protein: chicken
+course: dinner
+tags:
+  - weekday
+  - kid-friendly
+equipment:
+  - frying pan
 ---
 ```
 
@@ -173,7 +224,7 @@ author: Name
 - Named: `~oven{25%minutes}`
 
 **Structure:**
-- Sections: `= Main Course` or `== Sauce ==`
+- Sections: `=Main Course` (single equals; `==…==` is **menu-file syntax** and breaks the iOS app's recipe parser)
 - Steps: Separate paragraphs (blank line between)
 - Comments: `-- this is a comment`
 - Notes: `> This is a tip or background note`

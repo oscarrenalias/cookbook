@@ -1,6 +1,15 @@
 # Cookbook
 
-A personal recipe collection in [CookLang](https://cooklang.org/) format. Used for cooking, weekly meal planning, and shopping-list generation via the [Cook CLI](https://cooklang.org/docs/cli/).
+A personal recipe collection in [CookLang](https://cooklang.org/) format. Used for cooking, weekly meal planning, and shopping-list generation.
+
+## Consumers
+
+These files are read by **two parsers**, both of which must be kept happy:
+
+1. **Cook CLI** (<https://cooklang.org/docs/cli/>) — local tooling for rendering, scaling, and shopping-list generation.
+2. **The CookbookApp iOS app** (separate repo at `~/Projects/cookbook-app`) — loads this folder as its recipes source. Reads `.cook` files, `.menu` files in `plans/`, `.md` shopping lists in `shopping-lists/`, and `config/aisle.conf`. Canonical examples live at `cookbook-app/docs/examples/{recipe.cook, meal-plan.menu, shopping-list.md, aisle.conf}`.
+
+When in doubt about format, the iOS app's parser is the stricter consumer — round-tripping through it is the safest correctness bar. Files the iOS app can't load silently disappear from the relevant tab.
 
 ## Repository layout
 
@@ -11,7 +20,7 @@ Pasta/        # anything tagged `pasta-dish`
 Pizza/        # pizza recipes
 Rice/         # anything tagged `rice-dish`
 Soup/         # anything tagged `soup`
-Salads/       # salad recipes
+Salad/        # salad recipes
 Sides/        # side dishes (e.g. hummus)
 Desserts/     # sweet courses (e.g. tiramisu)
 Vegetarian/   # vegetarian dishes (beans, lentils, egg, cheese-not-pizza, vegetables)
@@ -41,7 +50,6 @@ title: Recipe Name
 servings: 4
 prep time: 15 minutes
 cook time: 25 minutes
-time: 40 minutes
 difficulty: easy
 cuisine: generic
 protein: chicken
@@ -57,7 +65,7 @@ equipment:
 
 ### Metadata rules
 
-- Keys use spaces, not snake_case: `prep time`, not `prep_time`. Use `time` for total time, `course` (not `meal_type`), `servings` numeric.
+- Keys use spaces, not snake_case: `prep time`, not `prep_time`. Use `course` (not `meal_type`), `servings` numeric. Total time is implicit (`prep time` + `cook time`); a separate `time:` key is redundant and not consumed by either Cook CLI or the iOS app — don't add one.
 - Values are lowercase except `title`.
 - `tags` and `equipment` are YAML arrays. Put planning traits in `tags` rather than inventing new boolean keys.
 - Don't add equivalent variants of the same concept (`batch-cook` vs `batch_cook` vs `suitable_for_batching`).
@@ -96,6 +104,17 @@ Tag semantics:
 - Sauces, stews, soups, meatballs, casseroles, oven trays → `batch-cook`, often `freezer-friendly`.
 - Mild familiar dishes → `kid-friendly`.
 - Add `spicy` only when chili/curry heat is central; otherwise `mild` for family-style dishes.
+
+## Section heading syntax
+
+Two different "section" markers exist; do not mix them up:
+
+| Where | Syntax | Meaning |
+|---|---|---|
+| Recipe `.cook` body | `=Section name` (single equals, optionally with trailing spaces) | Subdivides a recipe's steps (e.g. `=Filling`, `=Sauce`). Modern CookLang format. |
+| Meal plan `.menu` body | `==Day or block name==` (double equals on both sides) | A day or named planning block in a `.menu` file. **Never use this in a recipe body.** |
+
+The iOS app's parser is strict about this distinction. Putting `==Filling==` inside a recipe will not be recognised as a section.
 
 ## CookLang body syntax
 
@@ -136,7 +155,7 @@ Use timers where they actually help cooking flow.
 ## When creating or editing recipes
 
 1. Pick a Title Case filename with spaces; it must match the `title:` field exactly.
-2. Use the frontmatter template above. All required keys (`title`, `servings`, `prep time`, `cook time`, `time`, `difficulty`, `cuisine`, `protein`, `course`, `tags`, `equipment`) must be present.
+2. Use the frontmatter template above. All required keys (`title`, `servings`, `prep time`, `cook time`, `difficulty`, `cuisine`, `protein`, `course`, `tags`, `equipment`) must be present.
 3. Keep recipes practical and household-style, sized for family cooking, with common European/Finnish supermarket ingredients unless the cuisine implies otherwise.
 4. Mark every shopping-list-relevant ingredient with `@…{qty%unit}` so shopping-list generation works.
 5. If you make non-trivial assumptions (substitutions, invented quantities, unfamiliar dish), add `needs-review` to `tags`.
@@ -162,4 +181,23 @@ cook recipe scale "Pasta/Pasta Bolognese.cook" 6               # rescale serving
 cook shopping-list "Pasta/Pasta Bolognese.cook" "Soup/Salmon Soup.cook"
 ```
 
-Weekly menus go in `plans/` as `.menu` files (one recipe path per line); shopping lists are derived from those.
+For meal plans and shopping lists, prefer the dedicated skills (`meal-plan`, `shopping-list`) over hand-authoring or invoking `cook shopping-list` directly — they output formats the iOS app can load.
+
+## Generated outputs
+
+### Meal plans (`plans/*.menu`)
+
+Modern CookLang `.menu` format with optional YAML frontmatter and `==Day==` blocks containing `@./relative-path/Recipe Name{N%servings}` references. See `cookbook-app/docs/examples/meal-plan.menu` for the canonical shape. The iOS app expects this format; the older "one recipe path per line with `#` comment headers" format is **not** supported.
+
+### Shopping lists (`shopping-lists/*.md`)
+
+Markdown with this exact heading hierarchy:
+
+- `# <list title>` — H1, becomes the list's in-app title.
+- `## Notes` *(optional)* — free-text block, surfaces as the editable Notes section in the iOS app.
+- `## Meals` — provenance bullets, e.g. `- **Saturday dinner** — Recipe Name`.
+- `## <aisle name>` — one section per aisle; checklist items as `- [ ] *qty unit* item name`.
+
+Anything outside those four block kinds is dropped on save by the iOS app's parser.
+
+Weekly menus go in `plans/` as `.menu` files; shopping lists derived from them go in `shopping-lists/`.
