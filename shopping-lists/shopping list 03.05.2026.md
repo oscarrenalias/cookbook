@@ -15,9 +15,9 @@
 - **Dairy staples for the week** — Dairy Staples
 
 ## produce
-- [ ] *300 g* broccoli
+- [x] *300 g* broccoli
 - [ ] *6 piece* carrot
-- [ ] *1 piece* courgette
+- [x] *1 piece* courgette
 - [ ] *15 g* fresh coriander
 - [ ] *20 g* fresh ginger
 - [ ] *2 tsp, 17 piece* garlic
@@ -69,8 +69,8 @@
 - [ ] *60 ml* soy sauce
 - [ ] *400 ml* stock
 - [ ] *7 tbsp* tomato paste
-- [ ] *1 tbsp* worcestershire sauce
-- [ ] *1 bottle* canola oil (for frying)
+- [x] *1 tbsp* worcestershire sauce
+- [x] *1 bottle* canola oil (for frying)
 
 ## pasta
 - [ ] *1000 g* dried pasta
