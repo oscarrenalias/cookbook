@@ -1,0 +1,29 @@
+== Sat ==
+@./Meat/Hot Dogs{10%servings}
+@./Fish/Grilled Tuna{5%servings}
+@./Vegetarian/Roasted Vegetables{5%servings}
+@./Sides/Hummus{4%servings}
+
+== Sun lunch ==
+@./Fish/Roasted Fish{5%servings}
+@./Sides/Oven Roasted Potatoes{4%servings}
+
+== Mon ==
+@./Meat/Chicken Noodles{5%servings}
+
+== Tue ==
+@./Rice/Mushroom Risotto{5%servings}
+
+== Wed ==
+@./Meat/Pulled Pork{5%servings}
+@./Sides/Guacamole{4%servings}
+
+== Thu ==
+@./Pasta/Conchiglie Pasta with Tomato and Mozzarella{5%servings}
+
+== Week lunch ==
+@./Vegetarian/Chana Masala{5%servings}
+@./Meat/Schnitzel{5%servings}
+
+== Staples ==
+@./Pantry/Dairy Staples{5%servings}
