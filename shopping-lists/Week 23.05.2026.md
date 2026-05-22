@@ -24,6 +24,8 @@
 - [ ] *2 piece* green bell pepper
 - [ ] *800 g, 1.5 kg* potato
 - [ ] *1 piece* tomatoes
+- [ ] salad greens
+- [ ] fruits
 
 ## fruits
 - [ ] *2 piece* lemon
@@ -41,6 +43,10 @@
 ## dairy
 - [x] *70 g* butter
 - [ ] *150 ml* milk
+- [ ] *2 l* milk
+- [ ] *2 l* skimmed milk
+- [ ] *4 piece* flavoured rahka
+- [ ] *4 piece* unflavoured rahka
 
 ## meat
 - [ ] *1700 g* chicken breast fillet
@@ -50,6 +56,7 @@
 - [ ] *700 g* chicken mince
 - [ ] *700 g* beef mince
 - [ ] *250 g* chorizo sausage
+- [ ] *1 pkg* ham
 
 ## seafood
 - [x] *900 g* salmon fillets (for grilling)
@@ -84,6 +91,7 @@
 ## oils
 - [x] *11 tbsp* olive oil
 - [x] *11 tbsp* neutral oil
+- [ ] vegetable oil
 
 ## spices
 - [x] *12.5 tsp* salt
