@@ -7,16 +7,16 @@ Already have cocoa powder.
 - Tiramisu
 
 ## cheese
-- [ ] *227 g* mascarpone
+- [x] *227 g* mascarpone
 
 ## eggs
-- [ ] *4 piece* eggs (for yolks)
+- [x] *4 piece* eggs (for yolks)
 
 ## dairy
-- [ ] *180 ml* heavy cream
+- [x] *180 ml* heavy cream
 
 ## bakery
-- [ ] *200 g* ladyfingers
+- [x] *200 g* ladyfingers
 
 ## pantry
 - [x] *30 g* bittersweet chocolate
