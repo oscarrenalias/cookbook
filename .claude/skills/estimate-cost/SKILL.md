@@ -147,10 +147,73 @@ estimate-cost.py lookup spagetti --brand Rummo
 
 # See what is still unmapped, ranked by how often it appears
 estimate-cost.py coverage
+
+# Find unmapped ingredients, then verify and append translations
+estimate-cost.py learn --limit 60
+estimate-cost.py learn --apply proposals.json --dry-run
+estimate-cost.py learn --apply proposals.json
 ```
 
-## Growing the config
+## Growing the config — the agent does this, not the user
 
-`coverage` scans all 53 lists and ranks unmapped ingredients by frequency, so effort goes where it pays. The distribution is a long tail: mapping the top 100 names covers about 75% of all item lines, and the seed config already covers 73%.
+`config/kruoka-products.yaml` is meant to be **agent-maintained**. Nobody should be hand-writing Finnish translations into it. When coverage is low or an estimate reports unpriced items, run this loop:
 
-Work down the `coverage` list, checking each term with `lookup` before adding it.
+### Step 1: Get the unmapped ingredients
+
+```bash
+estimate-cost.py learn --limit 60
+```
+
+Prints a JSON array of unmapped ingredient names with how often each appears across all lists, most frequent first.
+
+### Step 2: Translate them
+
+Write a JSON array of proposals. Only `ingredient` and `query` are required:
+
+```json
+[
+  {"ingredient": "hot dog buns", "query": "hodarisämpylä"},
+  {"ingredient": "cheddar cheese", "query": "cheddar", "category": "juusto"},
+  {"ingredient": "frying oil", "query": "rypsiöljy", "exclude": ["margariini"]},
+  {"ingredient": "garam masala", "pantry": true},
+  {"ingredient": "soap for pool", "skip": true}
+]
+```
+
+### Step 3: Verify before writing — **do not skip this**
+
+```bash
+estimate-cost.py learn --apply proposals.json --dry-run
+```
+
+This runs a real search for every proposal and prints the product each term actually resolves to. **Read that output.** A translation that reads perfectly can still be wrong, and the only way to find out is to look:
+
+- `cava` → *De Cecco **Cava**tappi pasta* — rejected automatically, the term only matched inside a longer word
+- `cheddar` → *Sundlings Cheddar **Popcornmauste*** — accepted by the tool, wrong to a human; needs `category: juusto`
+- `rypsiöljy` → *savustetut sinisimpukat* (mussels packed in rapeseed oil) — needs an `exclude`
+- `tortilla` → *Tortilla **Chips*** — needs `exclude: [chips]`
+- `liemikuutio` → nothing at all, while plain `liemi` works
+
+Fix the bad ones by adding `category` or `exclude`, and re-run the dry run until the matches look right.
+
+### Step 4: Write
+
+```bash
+estimate-cost.py learn --apply proposals.json
+```
+
+Appends the verified entries to the config, preserving comments and structure. Rejected proposals are listed with the reason so you can retry them with better terms.
+
+### What gets rejected automatically
+
+- The term matches no product at all.
+- A specified `brand` is not stocked for that term.
+- The term only matches *inside* a longer compound word (`cava` in `cavatappi`). This is stricter than the estimator's own matching, which tolerates a prefix as a fallback — a mapping being written to disk should rest on a clean word match.
+
+Finnish inflection is allowed for: `kalafile` matches `kalafileet`, since the extra suffix is short.
+
+### Why persist it at all, rather than translating on the fly
+
+- **Comparability.** If the term drifts between runs, your weekly totals move for reasons unrelated to prices. Pinned terms mean a change in the total is a real change in cost.
+- **No agent required.** `estimate-cost.py "list.md"` stays a plain CLI, usable from a script or a shell with no LLM in the loop.
+- **Verification is the valuable part.** The file records terms that were checked against real search results, not terms that merely sounded right.

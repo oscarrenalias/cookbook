@@ -546,12 +546,20 @@ def match_rank(name: str, query: str) -> int:
     ja kesakurpitsa' is baby food that happens to contain one, and it is
     cheaper, so price alone picks the baby food.
 
-    A standalone word beats a prefix, because Finnish compounds built on the
-    term are usually a different product: 'maitokolmio' is a chocolate drink,
-    'munakoisopyree' is puree, 'salaattisikuri' is chicory.
+    Every query token must land on a word of its own, allowing a short suffix
+    for Finnish inflection ('kalafile' should match 'kalafileet'). A longer
+    tail means a different compound word and usually a different product:
+    'cavatappi' is not cava, 'munakoisopyree' is not an aubergine.
     """
     folded, wanted = fold(name), fold(query)
-    if wanted in set(re.split(r"[^\w]+", folded)):
+    words = [w for w in re.split(r"[^\w]+", folded) if w]
+    tokens = [t for t in re.split(r"[^\w]+", wanted) if t]
+
+    def lands(token: str) -> bool:
+        return any(w == token or (w.startswith(token) and len(w) - len(token) <= 3)
+                   for w in words)
+
+    if tokens and all(lands(t) for t in tokens):
         return 0
     if folded.startswith(wanted):
         return 1
@@ -808,6 +816,184 @@ def cmd_lookup(args) -> int:
     return 0
 
 
+# --- learning new mappings -------------------------------------------------
+
+LEARNED_HEADER = "  # --- learned (appended by `learn`; edit freely) ---"
+
+
+def unmapped_counts(config: "Config") -> "collections.Counter":
+    import collections
+
+    counts: collections.Counter = collections.Counter()
+    for path in sorted(SHOPPING_LISTS.glob("*.md")):
+        for item in parse_list(path):
+            if config.classify(item.qualified, item.name) != "price":
+                continue
+            if config.resolve(item.qualified, item.name) is None:
+                counts[normalise(item.qualified)] += 1
+    return counts
+
+
+def insert_into_block(text: str, key: str, lines: list[str]) -> str:
+    """Append lines at the end of a top-level YAML block, keeping comments.
+
+    Rewriting the file through a YAML dumper would strip every comment, and
+    the comments are most of what makes this file readable.
+    """
+    if not lines:
+        return text
+    rows = text.splitlines()
+    try:
+        start = next(i for i, r in enumerate(rows) if r.rstrip() == f"{key}:")
+    except StopIteration:
+        return text.rstrip("\n") + f"\n\n{key}:\n" + "\n".join(lines) + "\n"
+    end = len(rows)
+    for i in range(start + 1, len(rows)):
+        row = rows[i]
+        # A non-indented, non-blank, non-comment line starts the next block.
+        if row.strip() and not row.startswith((" ", "\t")) and not row.lstrip().startswith("#"):
+            end = i
+            break
+    while end > start + 1 and not rows[end - 1].strip():
+        end -= 1
+    return "\n".join(rows[:end] + lines + rows[end:]) + "\n"
+
+
+def render_product(entry: dict) -> list[str]:
+    name, query = entry["ingredient"], entry["query"]
+    extras = {k: entry.get(k) for k in ("brand", "category", "ean", "exclude")}
+    extras = {k: v for k, v in extras.items() if v}
+    if not extras:
+        return [f"  {name}: {query}"]
+    lines = [f"  {name}:", f"    query: {query}"]
+    for key, value in extras.items():
+        if key == "exclude":
+            lines.append(f"    exclude: [{', '.join(str(v) for v in value)}]")
+        else:
+            lines.append(f"    {key}: {value}")
+    return lines
+
+
+def cmd_learn(args) -> int:
+    config = load_config(PRODUCTS_CONFIG, AISLE_CONFIG)
+
+    if not args.apply:
+        counts = unmapped_counts(config)
+        payload = [{"ingredient": name, "seen": count}
+                   for name, count in counts.most_common(args.limit)]
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        print(
+            f"\n// {len(counts)} distinct unmapped names; showing {len(payload)}.\n"
+            "// Translate each into a Finnish search term and write a JSON array of\n"
+            '// {\"ingredient\", \"query\"} objects, optionally with \"brand\",\n'
+            '// \"category\", \"exclude\", \"ean\", or \"pantry\": true / \"skip\": true.\n'
+            "// Then run:  estimate-cost.py learn --apply proposals.json",
+            file=sys.stderr,
+        )
+        return 0
+
+    try:
+        proposals = json.loads(pathlib.Path(args.apply).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise EstimateError(f"Could not read proposals: {exc}") from None
+    if not isinstance(proposals, list):
+        raise EstimateError("Proposals must be a JSON array.")
+
+    auth = load_auth()
+    creds = auth.load()
+    if creds.missing_required():
+        raise EstimateError("No K-Ruoka credentials. Run kruoka-auth.py capture.")
+    catalog = Catalog(creds, refresh=args.refresh)
+    now = datetime.now(timezone.utc)
+
+    accepted: list[dict] = []
+    pantry: list[str] = []
+    skip: list[str] = []
+    rejected: list[tuple[str, str]] = []
+
+    for raw in proposals:
+        if not isinstance(raw, dict) or not raw.get("ingredient"):
+            rejected.append((str(raw)[:40], "not an object with an ingredient"))
+            continue
+        name = normalise(str(raw["ingredient"]))
+        if raw.get("pantry"):
+            pantry.append(name)
+            continue
+        if raw.get("skip"):
+            skip.append(name)
+            continue
+        query = str(raw.get("query") or "").strip()
+        if not query:
+            rejected.append((name, "no query given"))
+            continue
+
+        spec = Spec(
+            query=query, brand=str(raw.get("brand") or ""),
+            category=str(raw.get("category") or ""),
+            exclude=[str(x).lower() for x in (raw.get("exclude") or [])],
+        )
+        # Verify against live results. A plausible-sounding translation is not
+        # good enough: "liemikuutio" reads fine and returns nothing usable.
+        chosen, brand_ok = choose(catalog.search(query), spec, COUNT, now)
+        if chosen is None:
+            rejected.append((name, f"'{query}' matches no product"))
+            continue
+        if spec.brand and not brand_ok:
+            rejected.append((name, f"brand {spec.brand} not stocked for '{query}'"))
+            continue
+        # Stricter than selection, which tolerates a prefix match as a
+        # fallback. A mapping being written to disk should rest on a clean
+        # word match: "cava" finds "Cavatappi pasta", "munakoiso" finds
+        # "Munakoisopyree", and neither deserves to be persisted.
+        if match_rank(chosen.get("name", ""), query) > 0:
+            rejected.append(
+                (name, f"'{query}' only matches inside '{chosen.get('name', '')[:34]}'"))
+            continue
+        price, _, _ = effective_price(chosen, now)
+        accepted.append({**raw, "ingredient": name, "query": query,
+                         "_match": chosen.get("name", ""), "_price": price})
+
+    print(f"Verified {len(proposals)} proposal(s): {len(accepted)} product mapping(s), "
+          f"{len(pantry)} pantry, {len(skip)} skip, {len(rejected)} rejected.\n")
+    for entry in accepted:
+        price = entry["_price"]
+        shown = f"{price:.2f} EUR" if isinstance(price, (int, float)) else "?"
+        print(f"  OK       {entry['ingredient']:<26} {entry['query']:<24} "
+              f"{shown:>9}  {entry['_match'][:38]}")
+    for name in pantry:
+        print(f"  pantry   {name}")
+    for name in skip:
+        print(f"  skip     {name}")
+    for name, why in rejected:
+        print(f"  REJECT   {name:<26} {why}")
+
+    if args.dry_run:
+        print("\nDry run; nothing written.")
+        return 0
+    if not (accepted or pantry or skip):
+        print("\nNothing to write.")
+        return 1
+
+    text = PRODUCTS_CONFIG.read_text(encoding="utf-8")
+    text = insert_into_block(text, "pantry", [f"  - {n}" for n in pantry])
+    text = insert_into_block(text, "skip", [f"  - {n}" for n in skip])
+    product_lines: list[str] = []
+    if accepted and LEARNED_HEADER not in text:
+        product_lines.append(LEARNED_HEADER)
+    for entry in accepted:
+        product_lines.extend(render_product(entry))
+    text = insert_into_block(text, "products", product_lines)
+
+    tmp = PRODUCTS_CONFIG.with_suffix(".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(PRODUCTS_CONFIG)
+    print(f"\nWrote {len(accepted) + len(pantry) + len(skip)} entr(ies) to "
+          f"{PRODUCTS_CONFIG.relative_to(REPO_ROOT)}.")
+    if rejected:
+        print(f"{len(rejected)} rejected; try different terms and re-apply those.")
+    return 0
+
+
 def cmd_coverage(args) -> int:
     import collections
 
@@ -859,9 +1045,18 @@ def main(argv: list[str] | None = None) -> int:
     p_cov.add_argument("--limit", type=int, default=40)
     p_cov.set_defaults(func=cmd_coverage)
 
+    p_learn = sub.add_parser(
+        "learn", help="List unmapped ingredients, or verify and append proposals")
+    p_learn.add_argument("--apply", help="JSON file of proposed mappings to verify")
+    p_learn.add_argument("--dry-run", action="store_true",
+                         help="With --apply, verify but do not write")
+    p_learn.add_argument("--limit", type=int, default=60)
+    p_learn.add_argument("--refresh", action="store_true")
+    p_learn.set_defaults(func=cmd_learn)
+
     # `estimate-cost.py <file>` should work without typing the subcommand.
     argv = list(sys.argv[1:] if argv is None else argv)
-    if argv and argv[0] not in {"estimate", "lookup", "coverage", "-h", "--help"}:
+    if argv and argv[0] not in {"estimate", "lookup", "coverage", "learn", "-h", "--help"}:
         argv.insert(0, "estimate")
     args = parser.parse_args(argv)
     if not getattr(args, "func", None):

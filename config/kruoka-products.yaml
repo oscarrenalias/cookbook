@@ -46,12 +46,19 @@ pantry:
   - coriander seeds
 
 # Never real purchases.
+  - ground nutmeg
+  - dried basil
+  - dried parsley
+  - kashmiri chilli powder
+  - garam masala
 skip:
   - water
   - warm water
   - cold water
   - pasta cooking water
   - ice
+  - dinner
+  - soap for pool
 
 products:
   # --- preferred brands -----------------------------------------------------
@@ -239,3 +246,89 @@ products:
   nuts: pähkinä
   lemon juice: sitruunamehu
   lime juice: limettimehu
+  # --- learned (appended by `learn`; edit freely) ---
+  rahka: maitorahka
+  unflavoured rahka:
+    query: maitorahka
+    exclude: [maustettu, vanilja, mansikka]
+  arla rahka:
+    query: rahka
+    brand: Arla
+  protein rahka: proteiinirahka
+  salsa: salsakastike
+  frozen peas:
+    query: herne
+    category: pakasteet
+  lettuce:
+    query: salaatti
+    category: hedelmat-ja-vihannekset
+  salad:
+    query: salaatti
+    category: hedelmat-ja-vihannekset
+  hot dog buns: hodarisampyla
+  burger buns: hampurilaissampyla
+  hamburger buns: hampurilaissampyla
+  pitta bread: pitaleipa
+  conchiglie pasta:
+    query: conchiglie
+    brand: Rummo
+  makaroni pasta: makaroni
+  green spinach tagliatelle: tagliatelle
+  minced meat:
+    query: jauheliha
+    exclude: [maustettu, taco, koirille]
+  800g minced meat:
+    query: jauheliha
+    exclude: [maustettu, taco, koirille]
+  minced pork: porsaan jauheliha
+  hot dog sausages: nakki
+  nakki sausages: nakki
+  canned tuna:
+    query: tonnikala
+    category: sailykkeet
+  fish:
+    query: kalafile
+    exclude: [paneroitu, tays jyva, taysjyva, pakaste]
+  salmon:
+    query: lohifile
+    exclude: [savustettu, kirjolohi]
+  cheddar cheese:
+    query: cheddar
+    category: juusto
+  mayonnaise: majoneesi
+  rice vinegar: riisiviinietikka
+  apple cider vinegar: omenaviinietikka
+  sesame oil: seesamioljy
+  sesame seeds:
+    query: seesaminsiemen
+    category: kuivat-elintarvikkeet
+  flax seeds:
+    query: pellavansiemen
+    category: kuivat-elintarvikkeet
+  cornflour: maissitarkkelys
+  dry yeast: kuivahiiva
+  pickled cucumber: maustekurkku
+  corn:
+    query: maissi
+    category: sailykkeet
+  brown or green lentils:
+    query: linssi
+    exclude: [punainen, punaiset]
+  tortillas:
+    query: tortilla
+    category: texmex
+    exclude: [chips, sipsi, nacho]
+  jam: hillo
+  yoghurts: jogurtti
+  frying oil:
+    query: rypsioljy
+    exclude: [margariini, levite, simpukat, tonnikala, sardiini, sailyke, purkki]
+  toilet paper:
+    query: wc-paperi
+    exclude: [kostea, kids, pyyhe]
+  kitchen paper: talouspaperi
+  hand soap: kasisaippua
+  shower gel: suihkusaippua
+  deodorant: deodorantti
+  dishwasher pills: konetiskitabletti
+  worcestershire sauce: worcester
