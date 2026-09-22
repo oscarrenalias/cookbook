@@ -1,2 +1,8 @@
 .DS_Store
 .claude/settings.local.json
+
+# kruoka-auth: browser profile and exported credentials, never commit
+.claude/skills/kruoka-auth/.profile/
+.claude/skills/kruoka-auth/.profile.lock
+*.kruoka-env
+__pycache__/
