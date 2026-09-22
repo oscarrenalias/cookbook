@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.11,<3.14"
-# dependencies = ["httpx>=0.27", "keyring>=25", "pyyaml>=6"]
+# dependencies = ["httpx>=0.27", "keyring>=25", "pyyaml>=6", "curl-cffi>=0.7"]
 # ///
 """Estimate what a shopping list costs at K-Ruoka.
 
@@ -423,8 +423,9 @@ def trim(product: dict) -> dict:
 class Catalog:
     """Cached product search against one store."""
 
-    def __init__(self, creds, refresh: bool = False):
+    def __init__(self, creds, refresh: bool = False, auth=None):
         self.creds = creds
+        self.auth = auth or load_auth()
         self.refresh = refresh
         self.calls = 0
         CACHE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -434,8 +435,6 @@ class Catalog:
         return CACHE_DIR / f"{hashlib.sha1(key).hexdigest()}.json"
 
     def search(self, query: str) -> list[dict]:
-        import httpx
-
         query = query.strip()
         if not query:
             return []
@@ -449,8 +448,11 @@ class Catalog:
                     return cached["products"]
 
         self.calls += 1
+        # Routed through kruoka-auth's transport, which impersonates Chrome's
+        # TLS fingerprint. Cloudflare checks that as well as the cookies, and
+        # a stock client is challenged on some hosts.
         try:
-            response = httpx.post(
+            response = self.auth.post_json(
                 f"https://www.k-ruoka.fi/kr-api/v2/product-search/{query}",
                 params={
                     "offset": 0, "language": "fi", "storeId": self.creds.store_id,
@@ -458,10 +460,11 @@ class Catalog:
                     "isTrOffer": "false",
                 },
                 headers=self.creds.headers(), cookies=self.creds.cookies(),
-                timeout=httpx.Timeout(5.0, read=30.0), follow_redirects=False,
             )
-        except httpx.HTTPError:
-            raise EstimateError("Could not reach K-Ruoka. Check your connection.") from None
+        except Exception as exc:
+            raise EstimateError(
+                f"Could not reach K-Ruoka ({type(exc).__name__}). Check your connection."
+            ) from None
 
         if response.headers.get("cf-mitigated") == "challenge":
             raise EstimateError(

@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.11,<3.14"
-# dependencies = ["playwright>=1.40", "keyring>=25", "httpx>=0.27"]
+# dependencies = ["playwright>=1.40", "keyring>=25", "httpx>=0.27", "curl-cffi>=0.7"]
 # ///
 """Capture a K-Ruoka web session into the macOS Keychain.
 
@@ -44,6 +44,7 @@ import argparse
 import contextlib
 import fcntl
 import getpass
+import json
 import os
 import pathlib
 import shlex
@@ -251,6 +252,71 @@ def store(creds: Credentials) -> None:
 
 
 # --------------------------------------------------------------------------
+# HTTP transport
+# --------------------------------------------------------------------------
+
+@dataclass
+class Response:
+    status_code: int
+    headers: dict
+    text: str
+
+    @property
+    def is_success(self) -> bool:
+        return 200 <= self.status_code < 300
+
+    def json(self):
+        return json.loads(self.text)
+
+
+def post_json(url: str, *, headers: dict, cookies: dict,
+              params: dict | None = None, body: dict | None = None) -> Response:
+    """POST through a Chrome-impersonating TLS stack where one is available.
+
+    Cloudflare validates cf_clearance against the TLS handshake fingerprint,
+    not only the IP and User-Agent. Verified from one machine, one IP and one
+    set of valid cookies: plain curl is challenged while httpx succeeds, and
+    curl_cffi impersonating current Chrome succeeds where pretending to be
+    Chrome 124 is refused. So an ordinary HTTP client can be rejected on one
+    host and accepted on another with nothing else different, which is what
+    happens to httpx on Linux.
+
+    curl_cffi reproduces Chrome's fingerprint on any platform. httpx stays as
+    a fallback because it does work on macOS, and it keeps these tools usable
+    if curl_cffi has no wheel for the host.
+    """
+    try:
+        from curl_cffi import requests as impersonating
+    except ImportError:
+        impersonating = None
+
+    if impersonating is not None:
+        try:
+            raw = impersonating.post(
+                url, params=params, json=body, headers=headers, cookies=cookies,
+                timeout=30, impersonate="chrome", allow_redirects=False,
+            )
+            return Response(raw.status_code, dict(raw.headers), raw.text)
+        except Exception as exc:  # fall through rather than give up outright
+            print(f"Note: Chrome-impersonating request failed "
+                  f"({type(exc).__name__}); retrying with the stock client.",
+                  file=sys.stderr)
+
+    import httpx
+
+    try:
+        raw = httpx.post(
+            url, params=params, json=body, headers=headers, cookies=cookies,
+            timeout=httpx.Timeout(5.0, read=30.0), follow_redirects=False,
+        )
+    except httpx.TimeoutException:
+        raise AuthError("K-Ruoka timed out. Check your connection and retry.") from None
+    except httpx.HTTPError:
+        raise AuthError("Could not reach K-Ruoka. Check your connection.") from None
+    return Response(raw.status_code, dict(raw.headers), raw.text)
+
+
+# --------------------------------------------------------------------------
 # Capture
 # --------------------------------------------------------------------------
 
@@ -438,24 +504,20 @@ def probe_account(creds: Credentials) -> tuple[bool, str]:
     The active basket echoes a `userInfo` block that stays entirely blank until
     an account is attached; that is the signal we trust.
     """
-    import httpx
 
     if not creds.session or not creds.build_number or not creds.store_id:
         return False, ""
     try:
-        response = httpx.post(
+        response = post_json(
             f"{BASE_URL}/kr-api/basket/active",
-            headers=creds.headers(),
-            cookies=creds.cookies(),
-            json={
+            headers=creds.headers(), cookies=creds.cookies(),
+            body={
                 "storeId": creds.store_id,
                 "substitutionDefault": True,
                 "skipClearClosedDeliverySlot": False,
             },
-            timeout=httpx.Timeout(5.0, read=30.0),
-            follow_redirects=False,
         )
-    except httpx.HTTPError:
+    except Exception:
         return False, ""
     if not response.is_success:
         return False, ""
@@ -479,7 +541,6 @@ def is_authenticated(creds: Credentials) -> bool:
 
 def validate(creds: Credentials) -> str:
     """Make real API calls to prove the credentials work AND are logged in."""
-    import httpx
 
     missing = creds.missing_required()
     if missing:
@@ -496,19 +557,8 @@ def validate(creds: Credentials) -> str:
         "discountFilter": "false",
         "isTrOffer": "false",
     }
-    try:
-        response = httpx.post(
-            url,
-            params=params,
-            headers=creds.headers(),
-            cookies=creds.cookies(),
-            timeout=httpx.Timeout(5.0, read=30.0),
-            follow_redirects=False,
-        )
-    except httpx.TimeoutException:
-        raise AuthError("K-Ruoka timed out. Check your connection and retry.") from None
-    except httpx.HTTPError:
-        raise AuthError("Could not reach K-Ruoka. Check your connection.") from None
+    response = post_json(url, params=params, headers=creds.headers(),
+                         cookies=creds.cookies())
 
     if response.headers.get("cf-mitigated") == "challenge":
         raise AuthError(

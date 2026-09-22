@@ -16,7 +16,7 @@ Use this skill when:
 - You want to see which items dominate the bill.
 - You want to check whether a preferred brand is worth the difference.
 
-**Prerequisite:** the `kruoka-auth` skill must have captured a signed-in session. If this reports an expired session or a Cloudflare challenge, run `.claude/skills/kruoka-auth/kruoka-auth.py capture`.
+**Prerequisite:** the `kruoka-auth` skill must have captured a signed-in session. Requests go out through its Chrome-impersonating transport, because Cloudflare checks the TLS fingerprint as well as the cookies. If this reports an expired session or a Cloudflare challenge, run `.claude/skills/kruoka-auth/kruoka-auth.py capture`.
 
 ## Process
 

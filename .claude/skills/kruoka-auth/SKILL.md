@@ -143,7 +143,17 @@ set -a; . ~/.kruoka-env; set +a
 
 A file readable by other users gets a warning on every run; keep it `0600`.
 
-Note that `cf_clearance` is bound to the client IP. Credentials captured here work from the same machine or home network; they will most likely be rejected from a different public IP.
+### What `cf_clearance` is actually bound to
+
+Three things, not one:
+
+- **The client IP** — credentials work from the same machine or home network, and will most likely be rejected from a different public IP.
+- **The User-Agent** — replayed verbatim, which is why it is captured and exported alongside the cookies.
+- **The TLS handshake fingerprint** — the one that catches people out. Measured from a single machine, single IP, single set of valid cookies: plain `curl` is challenged while `httpx` succeeds, and `curl_cffi` impersonating current Chrome succeeds where pretending to be Chrome 124 is refused.
+
+That last point means an ordinary HTTP client can be accepted on one host and refused on another with nothing else different — in practice, `httpx` works on macOS and is challenged on Linux. Both tools therefore send requests through `curl_cffi` with `impersonate="chrome"`, which reproduces Chrome's fingerprint on any platform, falling back to `httpx` if no wheel is available for the host.
+
+**A Cloudflare challenge from a second machine is not a stale-credentials problem.** Check whether the same credentials still validate from the Mac before re-capturing: if they do, the difference is the client, not the cookies.
 
 ## Defaults and constraints
 
