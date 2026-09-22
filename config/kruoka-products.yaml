@@ -163,9 +163,15 @@ products:
     category: hedelmat-ja-vihannekset
 
   # --- dairy and eggs -------------------------------------------------------
-  milk: maito
-  full fat milk: täysmaito
-  skimmed milk: rasvaton maito
+  milk:
+    query: maito
+    brand: Pirkka
+  full fat milk:
+    query: täysmaito
+    brand: Pirkka
+  skimmed milk:
+    query: rasvaton maito
+    brand: Pirkka
   semi skimmed milk: kevytmaito
   butter:
     query: voi
@@ -175,7 +181,9 @@ products:
   creme fraiche: ranskankerma
   greek yogurt: kreikkalainen jogurtti
   yogurt: jogurtti
-  plain rahka: maitorahka
+  plain rahka:
+    query: maitorahka
+    brand: Valio
   flavoured rahka: maustettu rahka
   egg: kananmuna
   cheese: juusto
@@ -250,6 +258,7 @@ products:
   rahka: maitorahka
   unflavoured rahka:
     query: maitorahka
+    brand: Valio
     exclude: [maustettu, vanilja, mansikka]
   arla rahka:
     query: rahka
@@ -285,7 +294,9 @@ products:
   nakki sausages: nakki
   canned tuna:
     query: tonnikala
+    brand: Calvo
     category: sailykkeet
+    exclude: [salaatti, pasta]
   fish:
     query: kalafile
     exclude: [paneroitu, tays jyva, taysjyva, pakaste]
