@@ -71,8 +71,15 @@ FIELD_KEYS = {
 }
 
 # Where to look for a shell-style credentials file, for hosts with no Keychain.
+# The repo copy comes first: a sandboxed agent is often confined to its
+# workspace and cannot read the home directory, nor set an environment
+# variable pointing elsewhere.
 ENV_FILE_VAR = "KRUOKA_ENV_FILE"
-DEFAULT_ENV_FILE = pathlib.Path.home() / ".kruoka-env"
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
+ENV_FILE_CANDIDATES = (
+    REPO_ROOT / ".kruoka-env",
+    pathlib.Path.home() / ".kruoka-env",
+)
 
 # Records where load() found each field, so `status` can report it.
 LAST_SOURCES: dict[str, str] = {}
@@ -151,7 +158,11 @@ def read_env_file(path: pathlib.Path | None = None) -> dict[str, str]:
     """
     if path is None:
         configured = os.environ.get(ENV_FILE_VAR, "").strip()
-        path = pathlib.Path(configured) if configured else DEFAULT_ENV_FILE
+        if configured:
+            path = pathlib.Path(configured)
+        else:
+            path = next((c for c in ENV_FILE_CANDIDATES if c.is_file()),
+                        ENV_FILE_CANDIDATES[0])
     if not path.is_file():
         return {}
 

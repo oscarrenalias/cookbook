@@ -117,13 +117,23 @@ kruoka-auth.py export-env > ~/.kruoka-env && chmod 600 ~/.kruoka-env
 kruoka-auth.py export-env | ssh user@host 'umask 077 && cat > ~/.kruoka-env'
 ```
 
-Nothing further is needed. The tools read `~/.kruoka-env` themselves, so the
-agent needs no environment configuration, and refreshing credentials is a
-file overwrite with **no restart** — environment variables, by contrast, are
-only read once when a process starts.
+Nothing further is needed. The tools find the file themselves, so the agent
+needs no environment configuration, and refreshing credentials is a file
+overwrite with **no restart** — environment variables, by contrast, are only
+read once when a process starts.
 
-Put the file in the user's home directory, not inside the repo. It is a live
-login to the account and has no business in a working tree.
+**For a sandboxed agent** confined to its workspace, put the file at the repo
+root instead. That path is checked first, and it is reachable when the home
+directory is not:
+
+```bash
+kruoka-auth.py export-env \
+  | ssh user@host 'umask 077 && cat > ~/workspace/cookbook/.kruoka-env'
+```
+
+`.kruoka-env` is gitignored, so it will not be committed or show up in
+`git status`. It is still a live login to the account: keep it `0600` and
+never copy it anywhere that syncs or backs up.
 
 If you would rather set environment variables anyway:
 
