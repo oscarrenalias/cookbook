@@ -90,6 +90,12 @@ kruoka-auth.py export-env > ~/.kruoka-env
 
 ## How other tools read the credentials
 
+Credentials resolve in this order, and any one of the three is enough:
+
+1. **Environment variables** — the contract every consumer relies on.
+2. **A credentials file** — `~/.kruoka-env` by default, or wherever `KRUOKA_ENV_FILE` points.
+3. **The macOS Keychain** — a convenience for interactive use on this Mac.
+
 **Environment variables are the contract.** Any consumer should read these and nothing else:
 
 ```
@@ -99,13 +105,33 @@ KRUOKA_USER_AGENT  KRUOKA_BUILD_NUMBER  KRUOKA_STORE_ID  KRUOKA_CAPTURED_AT
 
 The Keychain is only a convenience for interactive use on this Mac. `kruoka-auth.py` resolves environment variables first and falls back to the Keychain second, so the same code runs unchanged somewhere without a Keychain.
 
-To hand credentials to a headless agent on this machine:
+### Handing credentials to a headless agent
+
+On the same machine, or another host on the same network:
 
 ```bash
+# same machine
 kruoka-auth.py export-env > ~/.kruoka-env && chmod 600 ~/.kruoka-env
-# then, in the other process:
+
+# another host, without the secret ever touching disk in between
+kruoka-auth.py export-env | ssh user@host 'umask 077 && cat > ~/.kruoka-env'
+```
+
+Nothing further is needed. The tools read `~/.kruoka-env` themselves, so the
+agent needs no environment configuration, and refreshing credentials is a
+file overwrite with **no restart** — environment variables, by contrast, are
+only read once when a process starts.
+
+Put the file in the user's home directory, not inside the repo. It is a live
+login to the account and has no business in a working tree.
+
+If you would rather set environment variables anyway:
+
+```bash
 set -a; . ~/.kruoka-env; set +a
 ```
+
+A file readable by other users gets a warning on every run; keep it `0600`.
 
 Note that `cf_clearance` is bound to the client IP. Credentials captured here work from the same machine or home network; they will most likely be rejected from a different public IP.
 

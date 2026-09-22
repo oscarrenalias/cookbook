@@ -70,6 +70,13 @@ FIELD_KEYS = {
     "captured_at": ("kruoka-captured-at", "KRUOKA_CAPTURED_AT"),
 }
 
+# Where to look for a shell-style credentials file, for hosts with no Keychain.
+ENV_FILE_VAR = "KRUOKA_ENV_FILE"
+DEFAULT_ENV_FILE = pathlib.Path.home() / ".kruoka-env"
+
+# Records where load() found each field, so `status` can report it.
+LAST_SOURCES: dict[str, str] = {}
+
 # Cloudflare only issues cf_clearance when it actually challenges the browser,
 # so a capture without it is normal rather than a failure. The store name is
 # cosmetic: it makes `status` readable but nothing depends on it.
@@ -133,27 +140,83 @@ def _keyring():
     return keyring
 
 
-def load() -> Credentials:
-    """Resolve credentials from the environment first, then the Keychain.
+def read_env_file(path: pathlib.Path | None = None) -> dict[str, str]:
+    """Parse a shell-style credentials file, as written by `export-env`.
 
-    Downstream consumers should rely on the environment variables alone; the
-    Keychain lookup is a macOS convenience for interactive use on this machine.
+    Accepts both `export KEY=value` and bare `KEY=value`, with shell quoting.
+    This exists so a machine without a Keychain -- a headless agent on the
+    same network, say -- can pick credentials up from a file without anything
+    having to set environment variables for it, and without a restart when
+    the short-lived Cloudflare cookies are refreshed.
+    """
+    if path is None:
+        configured = os.environ.get(ENV_FILE_VAR, "").strip()
+        path = pathlib.Path(configured) if configured else DEFAULT_ENV_FILE
+    if not path.is_file():
+        return {}
+
+    mode = path.stat().st_mode
+    if mode & 0o077:
+        print(
+            f"Warning: {path} is readable by other users; chmod 600 it.",
+            file=sys.stderr,
+        )
+
+    values: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        key, sep, raw = line.partition("=")
+        key = key.strip()
+        if not sep or not key:
+            continue
+        try:
+            parts = shlex.split(raw)
+        except ValueError:
+            continue
+        values[key] = parts[0] if parts else ""
+    return values
+
+
+def load() -> Credentials:
+    """Resolve credentials: environment, then a credentials file, then Keychain.
+
+    Downstream consumers only ever need one of these to be present. The
+    Keychain is a macOS convenience for interactive use; the file is how a
+    headless host gets the same credentials with no Keychain and no config.
     """
     creds = Credentials()
     account = getpass.getuser()
     keyring_module = None
+    from_file: dict[str, str] | None = None
+    LAST_SOURCES.clear()
 
     for name, (service, env_var) in FIELD_KEYS.items():
         value = os.environ.get(env_var, "").strip()
+        source = "env" if value else ""
+
+        if not value:
+            if from_file is None:
+                from_file = read_env_file()
+            value = from_file.get(env_var, "").strip()
+            source = "file" if value else source
+
         if not value and sys.platform == "darwin":
             if keyring_module is None:
                 try:
                     keyring_module = _keyring()
                 except ImportError:  # pragma: no cover - dependency is declared
-                    break
-            with contextlib.suppress(Exception):
-                value = (keyring_module.get_password(service, account) or "").strip()
+                    keyring_module = False
+            if keyring_module:
+                with contextlib.suppress(Exception):
+                    value = (keyring_module.get_password(service, account) or "").strip()
+                    source = "keychain" if value else source
+
         setattr(creds, name, value)
+        LAST_SOURCES[name] = source or "missing"
     return creds
 
 
@@ -499,9 +562,9 @@ def cmd_capture(args) -> int:
 
 def cmd_status(args) -> int:
     creds = load()
-    for name, (_service, env_var) in FIELD_KEYS.items():
+    for name, (_service, _env_var) in FIELD_KEYS.items():
         value = getattr(creds, name)
-        source = "env" if os.environ.get(env_var, "").strip() else "keychain"
+        source = LAST_SOURCES.get(name, "?")
         if not value:
             note = "MISSING" + (" (optional)" if name in OPTIONAL_FIELDS else "")
         elif name in ("store_id", "build_number", "store_name"):
