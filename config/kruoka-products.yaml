@@ -1,0 +1,241 @@
+# How shopping-list ingredients map onto K-Ruoka products.
+#
+# Used by the estimate-cost skill. Only ingredients that need help are listed;
+# anything absent is searched by its own name, which works for items already
+# written in Finnish and usually fails for English ones.
+#
+# Three levels of precision, each optional:
+#   milk: maito                       # just a Finnish search term
+#   crushed tomatoes:                 # ...plus a brand you prefer
+#     query: tomaattimurska
+#     brand: Mutti
+#     exclude: [basilika]             # ...plus variants to skip
+#     category: hedelmat-ja-vihannekset   # ...plus a category path substring
+#   parmesan:
+#     ean: "0000000000000"            # ...or pin one exact product
+#
+# Use `estimate-cost.py lookup <term> --brand <brand>` to check a term before
+# adding it, and `estimate-cost.py coverage` to see what is still unmapped.
+
+# Assumed already in the cupboard. Priced at 0 and listed separately, unless
+# --include-pantry is passed. These appear on nearly every list because the
+# recipes declare them, not because they are rebought weekly.
+pantry:
+  - salt
+  - black pepper
+  - olive oil
+  - neutral oil
+  - sugar
+  - paprika
+  - smoked paprika
+  - dried oregano
+  - dried dill
+  - dried thyme
+  - ground cumin
+  - chili flakes
+  - chili powder
+  - bay leaf
+  - cinnamon
+  - turmeric
+  - curry powder
+  - vinegar
+  - brown sugar
+  - ground turmeric
+  - dried rosemary
+  - cumin seeds
+  - coriander seeds
+
+# Never real purchases.
+skip:
+  - water
+  - warm water
+  - cold water
+  - pasta cooking water
+  - ice
+
+products:
+  # --- preferred brands -----------------------------------------------------
+  crushed tomatoes:
+    query: tomaattimurska
+    brand: Mutti
+    exclude: [basilika, valkosipuli, luomu, chili]
+  canned tomatoes:
+    query: tomaattimurska
+    brand: Mutti
+    exclude: [basilika, valkosipuli, luomu, chili]
+  chopped tomatoes:
+    query: tomaattimurska
+    brand: Mutti
+    exclude: [basilika, valkosipuli, luomu, chili]
+  passata:
+    query: passata
+    brand: Mutti
+  dried pasta:
+    query: pasta
+    brand: Rummo
+  pasta:
+    query: pasta
+    brand: Rummo
+  spaghetti:
+    query: spagetti
+    brand: Rummo
+    exclude: [gluteeniton, luomu, täysjyvä]
+  penne:
+    query: penne
+    brand: Rummo
+  fusilli:
+    query: fusilli
+    brand: Rummo
+
+  # --- produce --------------------------------------------------------------
+  garlic: valkosipuli
+  onion: sipuli
+  red onion: punasipuli
+  spring onion: kevätsipuli
+  carrot: porkkana
+  potato: peruna
+  sweet potato: bataatti
+  tomatoes: tomaatti
+  cherry tomatoes: kirsikkatomaatti
+  red bell pepper: punainen paprika
+  green bell pepper: vihreä paprika
+  yellow bell pepper: keltainen paprika
+  courgette:
+    query: kesäkurpitsa
+    category: hedelmat-ja-vihannekset
+  aubergine: munakoiso
+  cucumber: kurkku
+  mushrooms:
+    query: herkkusieni
+    category: hedelmat-ja-vihannekset
+  celery:
+    query: selleri
+    category: hedelmat-ja-vihannekset
+  leek: purjo
+  broccoli: parsakaali
+  cauliflower: kukkakaali
+  white cabbage: valkokaali
+  spinach: pinaatti
+  salad greens: salaattisekoitus
+  iceberg lettuce: jäävuorisalaatti
+  avocado: avokado
+  red chili:
+    query: chili
+    category: hedelmat-ja-vihannekset
+  fresh ginger: inkivääri
+  lemon:
+    query: sitruuna
+    category: hedelmat-ja-vihannekset
+  lime:
+    query: lime
+    category: hedelmat-ja-vihannekset
+  apple: omena
+  banana: banaani
+
+  # --- fresh herbs ----------------------------------------------------------
+  fresh basil:
+    query: basilika
+    category: hedelmat-ja-vihannekset
+  fresh thai basil:
+    query: basilika
+    category: hedelmat-ja-vihannekset
+  fresh parsley:
+    query: persilja
+    category: hedelmat-ja-vihannekset
+  fresh coriander:
+    query: korianteri
+    category: hedelmat-ja-vihannekset
+  fresh dill:
+    query: tilli
+    category: hedelmat-ja-vihannekset
+  fresh mint:
+    query: minttu
+    category: hedelmat-ja-vihannekset
+  fresh thyme:
+    query: timjami
+    category: hedelmat-ja-vihannekset
+
+  # --- dairy and eggs -------------------------------------------------------
+  milk: maito
+  full fat milk: täysmaito
+  skimmed milk: rasvaton maito
+  semi skimmed milk: kevytmaito
+  butter:
+    query: voi
+    exclude: [margariini, levite, kasvirasva, flora, keiju, oivariini]
+  cream: kuohukerma
+  sour cream: kermaviili
+  creme fraiche: ranskankerma
+  greek yogurt: kreikkalainen jogurtti
+  yogurt: jogurtti
+  plain rahka: maitorahka
+  flavoured rahka: maustettu rahka
+  egg: kananmuna
+  cheese: juusto
+  grated cheese: juustoraaste
+  parmesan:
+    query: parmesaani
+    category: juusto
+  mozzarella: mozzarella
+  feta: fetajuusto
+  cheddar: cheddar
+
+  # --- meat and fish --------------------------------------------------------
+  beef mince:
+    query: naudan jauheliha
+    exclude: [maustettu, taco, pakaste, koirille]
+  chicken mince: kanan jauheliha
+  pork mince: porsaan jauheliha
+  minced beef and pork: jauheliha sika-nauta
+  chicken breast fillet: kanan rintafile
+  chicken thigh: kanan reisi
+  beef chuck: naudan paisti
+  pork cutlets: porsaan leike
+  pork fillet: porsaan sisäfile
+  bacon: pekoni
+  ham: kinkku
+  chicken ham: kanaleikkele
+  chorizo sausage: chorizo
+  sausage: makkara
+  salmon fillet: lohifile
+  white fish fillets: kalafile
+  tuna: tonnikala
+  tuna steaks: tonnikalapihvi
+  shrimp: katkarapu
+
+  # --- cupboard -------------------------------------------------------------
+  flour: vehnäjauho
+  wholewheat flour: täysjyvävehnäjauho
+  breadcrumbs: korppujauho
+  tomato paste: tomaattipyree
+  chickpeas: kikherne
+  black beans: mustapapu
+  kidney beans: kidneypapu
+  red lentils: punainen linssi
+  lentils: linssi
+  coconut milk: kookosmaito
+  soy sauce: soijakastike
+  rice: riisi
+  basmati rice: basmatiriisi
+  arborio rice: risottoriisi
+  couscous: couscous
+  macaroni: makaroni
+  noodles: nuudeli
+  flour tortillas: tortilla
+  bread: leipä
+  stock: liemi
+  honey: hunaja
+  mustard: sinappi
+  tahini: tahini
+  peanut butter: maapähkinävoi
+  olives: oliivi
+  capers: kapris
+  fish sauce: kalakastike
+  lasagna sheets: lasagnelevy
+  oyster sauce: osterikastike
+  jasmine rice: jasmiiniriisi
+  ketchup: ketsuppi
+  pork sausages: grillimakkara
+  nuts: pähkinä
+  lemon juice: sitruunamehu
+  lime juice: limettimehu

@@ -6,3 +6,6 @@
 .claude/skills/kruoka-auth/.profile.lock
 *.kruoka-env
 __pycache__/
+
+# estimate-cost: cached K-Ruoka prices
+.cache/
