@@ -38,7 +38,7 @@ import re
 import sys
 import unicodedata
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 AUTH_SCRIPT = REPO_ROOT / ".claude" / "skills" / "kruoka-auth" / "kruoka-auth.py"
@@ -47,7 +47,8 @@ AISLE_CONFIG = REPO_ROOT / "config" / "aisle.conf"
 SHOPPING_LISTS = REPO_ROOT / "shopping-lists"
 CACHE_DIR = REPO_ROOT / ".cache" / "kruoka"
 CACHE_TTL_DAYS = 7
-CACHE_VERSION = 2          # bump when trim() changes shape, to retire old files
+CACHE_VERSION = 3          # bump when trim() changes shape, to retire old files
+OFFER_TTL_HOURS = 24       # offers turn over weekly; a 7-day cache serves expired ones
 SEARCH_LIMIT = 100
 
 # Categories that are essentially never what a recipe means by an ingredient.
@@ -416,7 +417,14 @@ def trim(product: dict) -> dict:
             "startDate": discount.get("startDate"),
             "endDate": discount.get("endDate"),
         } if discount else {},
-        "batch": bool(batch),
+        "batch": {
+            "amount": batch.get("amount"),
+            "price": batch.get("price"),
+            "unit": batch.get("unit") or "",
+            "type": batch.get("discountType") or "",
+            "startDate": batch.get("startDate"),
+            "endDate": batch.get("endDate"),
+        } if batch else {},
     }
 
 
@@ -457,6 +465,15 @@ class Catalog:
                 if age_days < CACHE_TTL_DAYS:
                     return cached["products"]
 
+        payload = self._fetch(query, category=category, offers_only=False)
+        products = [trim(row["product"]) for row in payload.get("result", [])
+                    if isinstance(row, dict) and isinstance(row.get("product"), dict)]
+        self._store(path, query, products)
+        return products
+
+    def _fetch(self, query: str = "", *, category: str = "", offers_only: bool = False,
+               offset: int = 0) -> dict:
+        """One API call, with the shared error taxonomy."""
         self.calls += 1
         # Routed through kruoka-auth's transport, which impersonates Chrome's
         # TLS fingerprint. Cloudflare checks that as well as the cookies, and
@@ -465,8 +482,9 @@ class Catalog:
             response = self.auth.post_json(
                 f"https://www.k-ruoka.fi/kr-api/v2/product-search/{query}",
                 params={
-                    "offset": 0, "language": "fi", "storeId": self.creds.store_id,
-                    "limit": SEARCH_LIMIT, "discountFilter": "false",
+                    "offset": offset, "language": "fi",
+                    "storeId": self.creds.store_id, "limit": SEARCH_LIMIT,
+                    "discountFilter": "true" if offers_only else "false",
                     "isTrOffer": "false",
                     **({"categoryPath": category} if category else {}),
                 },
@@ -491,14 +509,47 @@ class Catalog:
             )
         if not response.is_success:
             raise EstimateError(f"K-Ruoka returned HTTP {response.status_code}.")
+        try:
+            return response.json()
+        except ValueError:
+            raise EstimateError("K-Ruoka returned a non-JSON response.") from None
 
-        products = [trim(row["product"]) for row in response.json().get("result", [])
-                    if isinstance(row, dict) and isinstance(row.get("product"), dict)]
+    @staticmethod
+    def _store(path: pathlib.Path, query: str, products: list[dict]) -> None:
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(
             {"fetched": datetime.now(timezone.utc).isoformat(), "query": query,
              "products": products}, ensure_ascii=False), encoding="utf-8")
         tmp.replace(path)
+
+    def offers(self, category: str) -> list[dict]:
+        """Every current offer in a category, paginated.
+
+        Scoped rather than scanning the whole store: 5,492 offers here means
+        55 requests, while the handful of categories actually shopped covers
+        1,159 of them in about 12. Cached for a day, not a week -- offers turn
+        over weekly and a stale cache would recommend expired prices.
+        """
+        path = self._cache_path(f"__offers__{category}")
+        if not self.refresh and path.exists():
+            with contextlib.suppress(Exception):
+                cached = json.loads(path.read_text(encoding="utf-8"))
+                age = datetime.now(timezone.utc) - datetime.fromisoformat(cached["fetched"])
+                if age.total_seconds() < OFFER_TTL_HOURS * 3600:
+                    return cached["products"]
+
+        products: list[dict] = []
+        offset = 0
+        while True:
+            payload = self._fetch("", category=category, offers_only=True, offset=offset)
+            rows = payload.get("result") or []
+            products += [trim(r["product"]) for r in rows
+                         if isinstance(r, dict) and isinstance(r.get("product"), dict)]
+            total = payload.get("totalHits") or 0
+            offset += len(rows)
+            if not rows or offset >= total or offset >= 1000:
+                break
+        self._store(path, f"__offers__{category}", products)
         return products
 
 
@@ -695,6 +746,124 @@ def _build(item: Item, product: dict, price: float | None, unit_value: float | N
         brand=product.get("brand", ""), unit_price=shown, reason=reason,
         approximate=bool(product.get("approximate")), on_offer=label,
     )
+
+
+# --- offers ----------------------------------------------------------------
+
+LIST_DATE = re.compile(r"(\d{2})\.(\d{2})\.(\d{4})")
+
+
+def list_date(name: str) -> date | None:
+    """Read the shopping date out of a filename, ignoring nonsense.
+
+    Two files carry mistyped years (2027 and 2036) and two carry no date at
+    all; none of them should count towards what the user currently buys.
+    """
+    match = LIST_DATE.search(name)
+    if not match:
+        return None
+    day, month, year = (int(g) for g in match.groups())
+    try:
+        parsed = date(year, month, day)
+    except ValueError:
+        return None
+    return parsed if parsed <= date.today() else None
+
+
+def habit_counts(months: int) -> "collections.Counter":
+    """How often each ingredient appears in recently dated lists."""
+    import collections
+
+    cutoff = date.today() - timedelta(days=30 * months)
+    counts: collections.Counter = collections.Counter()
+    for path in sorted(SHOPPING_LISTS.glob("*.md")):
+        when = list_date(path.name)
+        if when is None or when < cutoff:
+            continue
+        for item in parse_list(path):
+            counts[normalise(item.qualified)] += 1
+    return counts
+
+
+def offer_categories(config: Config) -> list[str]:
+    """Top-level category paths worth scanning, taken from the config."""
+    tops = set()
+    for spec in config.products.values():
+        if spec.category:
+            tops.add(spec.category.split("/")[0])
+    return sorted(tops)
+
+
+def same_family(a: str, b: str) -> bool:
+    """Do two category paths share a top-level section?"""
+    if not a or not b:
+        return False
+    return a.split("/")[0] == b.split("/")[0]
+
+
+def offer_price(product: dict, now: datetime) -> tuple[float | None, float | None, str, str]:
+    """Effective price, unit price, label and end date for an active offer."""
+    discount = product.get("discount") or {}
+    if discount and discount.get("type") in ("PLUSSA", "STANDARD") \
+            and _campaign_active(discount, now):
+        return (discount.get("price"), discount.get("unit_value"),
+                discount.get("type", ""), discount.get("endDate") or "")
+    return None, None, "", ""
+
+
+def batch_offer(product: dict, now: datetime) -> dict | None:
+    """An active multi-buy, if the product has one."""
+    batch = product.get("batch") or {}
+    if not batch or batch.get("type") not in ("PLUSSA", "STANDARD"):
+        return None
+    if not _campaign_active(batch, now):
+        return None
+    amount, price = batch.get("amount"), batch.get("price")
+    if not isinstance(amount, (int, float)) or not isinstance(price, (int, float)):
+        return None
+    if amount < 2:
+        return None
+    return {"amount": int(amount), "price": float(price),
+            "type": batch.get("type", ""), "ends": batch.get("endDate") or ""}
+
+
+_CANONICAL: dict[str, str] = {}
+
+
+def canonical_category(catalog: Catalog, spec: Spec) -> str:
+    """The category of the product the estimator would normally pick.
+
+    This is the gate for reverse matching. Only 23 of 168 config entries
+    carry an explicit `category`, so relying on that alone leaves most
+    ingredients ungated -- which is how garlic matched a garlic snack,
+    butter matched salted-caramel ice cream and dried pasta matched frozen
+    Bolognese. Asking what the estimator itself would buy gives every
+    ingredient a category without any new configuration.
+
+    Memoised, and the underlying searches are cached, so the cost is one
+    lookup per ingredient that has a name-matching offer.
+    """
+    key = f"{spec.query}|{spec.category}|{spec.brand}"
+    if key in _CANONICAL:
+        return _CANONICAL[key]
+    pool = catalog.search(spec.query, spec.category) if spec.category else []
+    if not pool:
+        pool = catalog.search(spec.query)
+    chosen, _ = choose(pool, spec, COUNT, datetime.now(timezone.utc))
+    _CANONICAL[key] = (chosen or {}).get("category", "")
+    return _CANONICAL[key]
+
+
+def gather_offers(catalog: Catalog, config: Config) -> list[dict]:
+    products: list[dict] = []
+    for category in offer_categories(config):
+        products += catalog.offers(category)
+    seen, unique = set(), []
+    for product in products:
+        if product.get("ean") and product["ean"] not in seen:
+            seen.add(product["ean"])
+            unique.append(product)
+    return unique
 
 
 # --- reporting -------------------------------------------------------------
@@ -1025,6 +1194,258 @@ def cmd_learn(args) -> int:
     return 0
 
 
+def cmd_deals(args) -> int:
+    config = load_config(PRODUCTS_CONFIG, AISLE_CONFIG)
+    auth = load_auth()
+    creds = auth.load()
+    if creds.missing_required():
+        raise EstimateError(
+            "No K-Ruoka credentials. Run "
+            ".claude/skills/kruoka-auth/kruoka-auth.py capture")
+    catalog = Catalog(creds, refresh=args.refresh, auth=auth)
+    now = datetime.now(timezone.utc)
+
+    store = creds.store_id + (f" ({creds.store_name})" if creds.store_name else "")
+    offers = gather_offers(catalog, config)
+    print(f"Store: {store}   {len(offers)} offer(s) in the categories you shop\n")
+
+    if args.list:
+        return _deals_for_list(args, config, catalog, offers, now)
+    return _deals_by_habit(args, config, catalog, offers, now)
+
+
+def _matching_offers(offers: list[dict], spec: Spec, want_category: str,
+                     query: str) -> list[dict]:
+    """Offers that plausibly *are* the ingredient, not merely mention it.
+
+    Name matching alone is not enough: it pairs garlic with garlic pasta
+    sauce and lemon with lemon yogurt, both of which undercut the real
+    product. Requiring the offer to sit in the same top-level category as
+    the product normally chosen removes that whole class of error.
+    """
+    out = []
+    for product in offers:
+        if not product.get("web") or not product.get("name"):
+            continue
+        if match_rank(product["name"], query) != 0:
+            continue
+        if want_category and not same_family(product.get("category", ""), want_category):
+            continue
+        if spec.exclude and any(t in fold(product["name"]) for t in spec.exclude):
+            continue
+        out.append(product)
+    return out
+
+
+def _deals_for_list(args, config, catalog, offers, now) -> int:
+    path = pathlib.Path(args.list)
+    if not path.exists():
+        path = SHOPPING_LISTS / args.list
+        if not path.exists():
+            raise EstimateError(f"No such shopping list: {args.list}")
+
+    items = parse_list(path)
+    swaps, multibuys, value_buys = [], [], []
+
+    for item in items:
+        pick = price_item(item, config, catalog, now, args.include_pantry)
+        if pick.tag in ("pantry", "unpriced") or not pick.product:
+            continue
+        spec = config.resolve(item.qualified, item.name) or Spec(query=item.qualified)
+        baseline = catalog.search(spec.query, spec.category) or catalog.search(spec.query)
+        current = next((p for p in baseline if p.get("name") == pick.product), None)
+        if current is None:
+            continue
+
+        # Candidates are every comparable product, not only ones on offer.
+        # The largest saving available is usually the brand preference itself
+        # -- Mutti at 2.49/kg against Pirkka at 1.98/kg -- and neither is on
+        # offer. Restricting to offers would hide exactly what was asked for.
+        want_category = current.get("category", "")
+        # Same bar the offer side uses: a clean word match, not merely a
+        # substring. "paprika" appears inside "chilipaprika", which is how a
+        # green chili got proposed as a substitute for a green bell pepper.
+        candidates = [
+            c for c in baseline
+            if c.get("web") and c.get("name")
+            and match_rank(c["name"], spec.query) == 0
+            and same_family(c.get("category", ""), want_category)
+            and not (spec.exclude and any(t in fold(c["name"]) for t in spec.exclude))
+        ]
+        seen_eans = {c.get("ean") for c in candidates}
+        for extra in _matching_offers(offers, spec, want_category, spec.query):
+            if extra.get("ean") not in seen_eans:
+                candidates.append(extra)
+        measure = item.measure
+        wanted = UNIT_FOR_KIND.get(measure.kind)
+
+        for cand in candidates:
+            if cand.get("ean") == current.get("ean"):
+                continue  # already priced with its own offer
+            # Use the effective price, not only an offer price: a cheaper
+            # everyday product is just as much a saving, and is in fact where
+            # a brand preference costs the most.
+            price, unit_value, _ = effective_price(cand, now)
+            _, _, label, ends = offer_price(cand, now)
+            if price is None:
+                continue
+            # Compare like with like, then scale to the listed quantity.
+            if wanted and cand.get("unit") == wanted and current.get("unit") == wanted:
+                base_u = effective_price(current, now)[1]
+                if base_u is None or unit_value is None or unit_value >= base_u:
+                    continue
+                saving = (base_u - unit_value) * measure.amount / 1000.0
+                shown = f"{unit_value:.2f}/{wanted} vs {base_u:.2f}"
+            else:
+                base_p = effective_price(current, now)[0]
+                if base_p is None or price >= base_p:
+                    continue
+                qty = measure.amount if measure.kind == COUNT else 1.0
+                saving = (base_p - price) * qty
+                shown = f"{price:.2f}/pkg vs {base_p:.2f}"
+            if saving < args.min_saving:
+                continue
+            note = ""
+            if spec.brand and cand.get("brand", "").lower() != spec.brand.lower():
+                note = f"switches away from {spec.brand}"
+            swaps.append({"item": item.name, "saving": saving, "from": pick.product,
+                          "to": cand["name"], "shown": shown, "label": label,
+                          "ends": ends, "note": note})
+
+        for cand in candidates + ([current] if current else []):
+            batch = batch_offer(cand, now)
+            if not batch:
+                continue
+            unit_cost = effective_price(cand, now)[0]
+            if unit_cost is None:
+                continue
+            need = int(measure.amount) if measure.kind == COUNT else 1
+            need = max(need, 1)
+            packs = -(-need // batch["amount"]) * batch["amount"]
+            offer_total = (packs // batch["amount"]) * batch["price"]
+            normal_total = need * unit_cost
+            per_unit = batch["price"] / batch["amount"]
+            row = {
+                "item": item.name, "need": need, "buy": packs,
+                "offer_total": offer_total, "normal_total": normal_total,
+                "per_unit": per_unit, "unit_cost": unit_cost,
+                "product": cand["name"], "label": batch["type"], "ends": batch["ends"],
+            }
+            if offer_total < normal_total:
+                # Strictly cheaper than buying exactly what the list asks for.
+                row["saving"] = normal_total - offer_total
+                multibuys.append(row)
+            elif per_unit < unit_cost:
+                # Costs more overall but is better value: the "you need 1, but
+                # two is worth it" case. Reported separately so the extra
+                # outlay is never presented as a saving.
+                row["saving"] = 0.0
+                row["extra"] = offer_total - normal_total
+                row["per_unit_saving"] = unit_cost - per_unit
+                value_buys.append(row)
+
+    best: dict[str, dict] = {}
+    for swap in swaps:
+        if swap["item"] not in best or swap["saving"] > best[swap["item"]]["saving"]:
+            best[swap["item"]] = swap
+    ranked = sorted(best.values(), key=lambda s: -s["saving"])
+
+    print(f"# Cheaper swaps for {path.name}\n")
+    if not ranked:
+        print("  Nothing on offer beats what you would otherwise buy.\n")
+    for swap in ranked[: args.limit]:
+        print(f"  save {swap['saving']:>6.2f}  {swap['item']}")
+        print(f"                  now: {swap['from'][:52]}")
+        print(f"              instead: {swap['to'][:52]}  {swap['shown']}"
+              + (f"  [{swap['label']}]" if swap["label"] else ""))
+        if swap["note"]:
+            print(f"                        {swap['note']}")
+        if swap["ends"]:
+            print(f"                        offer ends {swap['ends'][:10]}")
+        print()
+
+    print("# Multi-buy worth taking\n")
+    if not multibuys:
+        print("  None today. Only about 5% of offers are multi-buy, so this is "
+              "often empty.\n")
+    for mb in sorted(multibuys, key=lambda m: -m["saving"])[: args.limit]:
+        surplus = mb["buy"] - mb["need"]
+        print(f"  save {mb['saving']:>6.2f}  {mb['item']}: buy {mb['buy']} for "
+              f"{mb['offer_total']:.2f} instead of {mb['need']} for {mb['normal_total']:.2f}")
+        print(f"                 {mb['product'][:52]}"
+              + (f"  [{mb['label']}]" if mb["label"] else ""))
+        if surplus:
+            print(f"                 leaves {surplus} spare")
+        print()
+
+    if value_buys:
+        print("# Better value, but you would spend more\n")
+        for vb in sorted(value_buys, key=lambda v: -v["per_unit_saving"])[: args.limit]:
+            print(f"  {vb['item']}: you need {vb['need']}, but {vb['buy']} costs "
+                  f"{vb['offer_total']:.2f} ({vb['per_unit']:.2f} each vs "
+                  f"{vb['unit_cost']:.2f})")
+            print(f"     {vb['extra']:+.2f} EUR outlay, {vb['per_unit_saving']:.2f} "
+                  f"cheaper per unit, {vb['buy'] - vb['need']} spare")
+            print(f"     {vb['product'][:52]}"
+                  + (f"  [{vb['label']}]" if vb["label"] else ""))
+            print()
+
+    total = sum(s["saving"] for s in ranked[: args.limit]) \
+        + sum(m["saving"] for m in multibuys[: args.limit])
+    print("-" * 60)
+    print(f"  Potential saving on this list: {total:.2f} EUR")
+    print(f"  {catalog.calls} API call(s); the rest came from cache.")
+    return 0
+
+
+def _deals_by_habit(args, config, catalog, offers, now) -> int:
+    counts = habit_counts(args.months)
+    if not counts:
+        raise EstimateError(
+            f"No shopping lists dated within the last {args.months} month(s).")
+
+    rows = []
+    for name, count in counts.items():
+        spec = config.resolve(name)
+        if spec is None:
+            continue
+        # Only pay for the canonical lookup when something name-matches first.
+        if not _matching_offers(offers, spec, "", spec.query):
+            continue
+        want = canonical_category(catalog, spec)
+        for cand in _matching_offers(offers, spec, want, spec.query):
+            price, unit_value, label, ends = offer_price(cand, now)
+            normal = cand.get("price")
+            if price is None or not isinstance(normal, (int, float)) or price >= normal:
+                continue
+            if normal - price < args.min_saving:
+                continue
+            rows.append({"ingredient": name, "count": count, "product": cand["name"],
+                         "price": price, "normal": normal, "label": label, "ends": ends,
+                         "brand": cand.get("brand", "")})
+
+    best: dict[str, dict] = {}
+    for row in rows:
+        key = row["ingredient"]
+        if key not in best or (row["normal"] - row["price"]) > (best[key]["normal"] - best[key]["price"]):
+            best[key] = row
+    ranked = sorted(best.values(), key=lambda r: (-r["count"], -(r["normal"] - r["price"])))
+
+    print(f"# Worth buying this week, based on the last {args.months} month(s)\n")
+    if not ranked:
+        print("  Nothing you regularly buy is on offer today.")
+        return 0
+    for row in ranked[: args.limit]:
+        saving = row["normal"] - row["price"]
+        print(f"  {row['count']:>3}x  {row['ingredient']:<22} "
+              f"{row['price']:.2f} vs {row['normal']:.2f}  (save {saving:.2f})"
+              + (f"  [{row['label']}]" if row["label"] else ""))
+        print(f"       {row['product'][:60]}"
+              + (f"   ends {row['ends'][:10]}" if row["ends"] else ""))
+    print(f"\n  Ranked by how often you buy it, then by saving.")
+    return 0
+
+
 def cmd_coverage(args) -> int:
     import collections
 
@@ -1077,6 +1498,19 @@ def main(argv: list[str] | None = None) -> int:
     p_cov.add_argument("--limit", type=int, default=40)
     p_cov.set_defaults(func=cmd_coverage)
 
+    p_deals = sub.add_parser(
+        "deals", help="Cheaper swaps and multi-buys for a list, or what to buy this week")
+    p_deals.add_argument("list", nargs="?",
+                         help="Shopping list; omit to get advice based on recent lists")
+    p_deals.add_argument("--months", type=int, default=3,
+                         help="How far back 'what you usually buy' looks (default: 3)")
+    p_deals.add_argument("--min-saving", type=float, default=0.20,
+                         help="Ignore savings below this (default: 0.20)")
+    p_deals.add_argument("--limit", type=int, default=15)
+    p_deals.add_argument("--include-pantry", action="store_true")
+    p_deals.add_argument("--refresh", action="store_true")
+    p_deals.set_defaults(func=cmd_deals)
+
     p_learn = sub.add_parser(
         "learn", help="List unmapped ingredients, or verify and append proposals")
     p_learn.add_argument("--apply", help="JSON file of proposed mappings to verify")
@@ -1088,7 +1522,8 @@ def main(argv: list[str] | None = None) -> int:
 
     # `estimate-cost.py <file>` should work without typing the subcommand.
     argv = list(sys.argv[1:] if argv is None else argv)
-    if argv and argv[0] not in {"estimate", "lookup", "coverage", "learn", "-h", "--help"}:
+    if argv and argv[0] not in {"estimate", "lookup", "coverage", "learn", "deals",
+                                "-h", "--help"}:
         argv.insert(0, "estimate")
     args = parser.parse_args(argv)
     if not getattr(args, "func", None):

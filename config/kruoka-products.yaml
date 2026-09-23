@@ -84,7 +84,8 @@ products:
     query: pasta
     brand: Rummo
   spaghetti:
-    query: spagetti
+    # Rummo spells it the Italian way; a 'spagetti' query never matches it.
+    query: spaghetti
     brand: Rummo
     exclude: [gluteeniton, luomu, täysjyvä]
   penne:
@@ -236,9 +237,13 @@ products:
   couscous: couscous
   macaroni: makaroni
   noodles: nuudeli
-  flour tortillas: tortilla
+  flour tortillas:
+    query: tortilla
+    exclude: [chips, sipsi, nacho, strips]
   bread: leipä
-  stock: liemi
+  stock:
+    query: liemi
+    exclude: [kala, sieni, hummeri]
   honey: hunaja
   mustard: sinappi
   tahini: tahini

@@ -1,6 +1,6 @@
 ---
 name: estimate-cost
-description: Estimate what a shopping list costs at K-Ruoka, honouring preferred brands, with every chosen product named so wrong picks are easy to correct
+description: Price a shopping list at K-Ruoka honouring preferred brands, and find cheaper swaps, current Plussa offers worth buying, and multi-buy deals
 ---
 
 # Estimate Cost
@@ -155,6 +155,69 @@ estimate-cost.py learn --limit 60
 estimate-cost.py learn --apply proposals.json --dry-run
 estimate-cost.py learn --apply proposals.json
 ```
+
+## Deals — cheaper swaps, offers and multi-buys
+
+Three related questions, one verb.
+
+```bash
+estimate-cost.py deals "shopping-lists/19.09.2026.md"   # swaps + multi-buys for a list
+estimate-cost.py deals                                   # what's worth buying this week
+estimate-cost.py deals --months 6                        # widen the habit window
+estimate-cost.py deals ... --min-saving 0.50             # raise the noise floor
+```
+
+### With a list: cheaper swaps
+
+For every priced line, finds comparable products that cost less than the one the estimator chose, and names both:
+
+```
+  save   2.66  canned tomatoes
+                  now: Mutti tomaattimurska 3x400g 3-pack
+              instead: K-Menu tomaattimurska 400g  0.83/kg vs 2.49
+                        switches away from Mutti
+```
+
+Candidates are **not** limited to products on offer. The largest saving available is usually the brand preference itself, and neither side of that comparison is discounted. Any swap that departs from a configured brand says so — you should never be surprised by it.
+
+### With a list: multi-buy
+
+Two separate cases, deliberately not merged:
+
+- **Cheaper outright** — taking the offer costs less than buying the listed quantity at normal price.
+- **Better value, more outlay** — the "you need 1, but 2 is better value" case. The extra spend is stated plainly rather than dressed up as a saving:
+
+```
+  dried pasta: you need 1, but 2 costs 4.50 (2.25 each vs 2.99)
+     +1.51 EUR outlay, 0.74 cheaper per unit, 1 spare
+```
+
+Only about 5% of offers are multi-buy, so this section is often empty. That is normal, not a fault.
+
+### Without a list: what to buy this week
+
+Ranks current offers by how often you actually buy the ingredient, taken from shopping lists dated within `--months` (default 3, which covers 26 of the 53 lists). Undated files and two with mistyped years are excluded.
+
+```
+   14x  onion                  1.99 vs 2.28  (save 0.29)  [STANDARD]
+       Sipulimix 1kg FI 2lk   ends 2026-10-04
+```
+
+Ranked by frequency first, then saving, and both are shown — "you buy this 14 times, it is 0.29 cheaper" is a reason you can check, where a blended score is not.
+
+### How offers are matched back to ingredients
+
+The hard part. Matching on name alone pairs garlic with garlic pasta sauce, lemon with lemon yogurt and dried pasta with frozen Bolognese — all of which undercut the real product on price and so win on cost.
+
+The gate is **category**: an offer must sit in the same top-level section as the product the estimator would normally pick for that ingredient. Only 23 of the config entries set `category` explicitly, so the rest derive it by asking what the estimator itself would buy. No extra configuration needed.
+
+Offers are fetched per category rather than scanning the store — 5,492 offers here would be 55 requests, while the categories actually shopped cover ~1,200 in about 12. Cached for 24 hours, not the 7 days used for prices, because offers turn over weekly.
+
+### Known limits
+
+- **Precision over recall.** Candidates need a clean word match, so some valid swaps are missed: `Jumboherkkusieni` will not match a `herkkusieni` query despite being the same thing. A wrong suggestion wastes a trip; a missed one costs a little money.
+- **Similar is not identical.** A cheaper cut is still a different cut. The output advises; it never decides.
+- Suggestions are capped by `--limit` and filtered by `--min-saving` (default €0.20).
 
 ## Growing the config — the agent does this, not the user
 
