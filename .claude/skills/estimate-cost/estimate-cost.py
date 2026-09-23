@@ -430,15 +430,25 @@ class Catalog:
         self.calls = 0
         CACHE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
 
-    def _cache_path(self, query: str) -> pathlib.Path:
-        key = f"v{CACHE_VERSION}|{self.creds.store_id}|{query}".encode("utf-8")
+    def _cache_path(self, query: str, category: str = "") -> pathlib.Path:
+        key = f"v{CACHE_VERSION}|{self.creds.store_id}|{category}|{query}".encode("utf-8")
         return CACHE_DIR / f"{hashlib.sha1(key).hexdigest()}.json"
 
-    def search(self, query: str) -> list[dict]:
+    def search(self, query: str, category: str = "") -> list[dict]:
+        """Search, optionally scoped to a category path.
+
+        Scoping happens server-side via `categoryPath`, which accepts a path
+        prefix, not only a full leaf path: `sitruuna` alone returns 709 hits
+        truncated to 100, while scoping to `hedelmat-ja-vihannekset` returns
+        all 78. Narrowing before truncation beats filtering after it.
+
+        An unrecognised path returns zero results rather than an error, so
+        callers must be ready to retry unscoped.
+        """
         query = query.strip()
         if not query:
             return []
-        path = self._cache_path(query)
+        path = self._cache_path(query, category)
         if not self.refresh and path.exists():
             with contextlib.suppress(Exception):
                 cached = json.loads(path.read_text(encoding="utf-8"))
@@ -458,6 +468,7 @@ class Catalog:
                     "offset": 0, "language": "fi", "storeId": self.creds.store_id,
                     "limit": SEARCH_LIMIT, "discountFilter": "false",
                     "isTrOffer": "false",
+                    **({"categoryPath": category} if category else {}),
                 },
                 headers=self.creds.headers(), cookies=self.creds.cookies(),
             )
@@ -625,7 +636,11 @@ def price_item(item: Item, config: Config, catalog: Catalog, now: datetime,
         # Finnish resolve fine; English ones usually will not, hence `guessed`.
         spec = Spec(query=item.qualified, source="verbatim")
 
-    products = catalog.search(spec.query)
+    # Scope the search to the category when one is configured, falling back
+    # to the broad search plus post-filtering if the path is not recognised.
+    products = catalog.search(spec.query, spec.category) if spec.category else []
+    if not products:
+        products = catalog.search(spec.query)
     if spec.ean:
         exact = next((p for p in products if p.get("ean") == spec.ean), None)
         if exact:
@@ -797,17 +812,27 @@ def cmd_lookup(args) -> int:
         raise EstimateError("No K-Ruoka credentials. Run kruoka-auth.py capture.")
     catalog = Catalog(creds, refresh=args.refresh)
     now = datetime.now(timezone.utc)
-    products = catalog.search(args.query)
+    products = catalog.search(args.query, args.category or "")
+    if not products and args.category:
+        print(f"Nothing under category '{args.category}'; retrying unscoped.", file=sys.stderr)
+        products = catalog.search(args.query)
     shown = [p for p in products if p.get("web")]
+    # Same relevance rule the estimator uses, so this previews what it would
+    # actually consider rather than the search engine's looser pool.
+    loose = len(shown)
+    shown = relevant(shown, args.query)
+    dropped = loose - len(shown)
     if args.brand:
         shown = [p for p in shown if p.get("brand", "").lower() == args.brand.lower()]
     if not shown:
         print(f"No matches for '{args.query}'"
               + (f" from brand {args.brand}" if args.brand else ""))
         return 1
-    shown.sort(key=lambda p: effective_price(p, now)[1] or float("inf"))
+    shown.sort(key=lambda p: (match_rank(p.get("name", ""), args.query),
+                              effective_price(p, now)[1] or float("inf")))
     print(f"{len(shown)} match(es) for '{args.query}'"
-          + (f", brand {args.brand}" if args.brand else "") + ":\n")
+          + (f", brand {args.brand}" if args.brand else "")
+          + (f"  ({dropped} loose match(es) filtered out)" if dropped else "") + ":\n")
     for product in shown[:args.limit]:
         price, unit_value, label = effective_price(product, now)
         unit_text = f"{unit_value:.2f}/{product.get('unit', '?')}" if unit_value else "-"
@@ -937,7 +962,10 @@ def cmd_learn(args) -> int:
         )
         # Verify against live results. A plausible-sounding translation is not
         # good enough: "liemikuutio" reads fine and returns nothing usable.
-        chosen, brand_ok = choose(catalog.search(query), spec, COUNT, now)
+        pool = catalog.search(query, spec.category) if spec.category else []
+        if not pool:
+            pool = catalog.search(query)
+        chosen, brand_ok = choose(pool, spec, COUNT, now)
         if chosen is None:
             rejected.append((name, f"'{query}' matches no product"))
             continue
@@ -1040,6 +1068,7 @@ def main(argv: list[str] | None = None) -> int:
     p_look = sub.add_parser("lookup", help="Search K-Ruoka, to help write the config")
     p_look.add_argument("query")
     p_look.add_argument("--brand", help="Only show this brand")
+    p_look.add_argument("--category", help="Scope to a category path prefix")
     p_look.add_argument("--limit", type=int, default=15)
     p_look.add_argument("--refresh", action="store_true")
     p_look.set_defaults(func=cmd_lookup)

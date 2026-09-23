@@ -190,7 +190,7 @@ products:
   grated cheese: juustoraaste
   parmesan:
     query: parmesaani
-    category: juusto
+    category: maito-juusto-munat-ja-rasvat
   mozzarella: mozzarella
   feta: fetajuusto
   cheddar: cheddar
@@ -305,7 +305,7 @@ products:
     exclude: [savustettu, kirjolohi]
   cheddar cheese:
     query: cheddar
-    category: juusto
+    category: maito-juusto-munat-ja-rasvat
   mayonnaise: majoneesi
   rice vinegar: riisiviinietikka
   apple cider vinegar: omenaviinietikka

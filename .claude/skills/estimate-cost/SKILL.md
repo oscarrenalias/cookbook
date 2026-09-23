@@ -84,7 +84,7 @@ Only ingredients that need help are listed. Anything absent is searched by its o
 |---|---|
 | `query` | The Finnish search term. Shorthand: `milk: maito` is the same as `milk: {query: maito}`. |
 | `brand` | Restrict to this brand, matched case-insensitively against the product's brand. |
-| `category` | Substring of the K-Ruoka category path, e.g. `hedelmat-ja-vihannekset`. The strongest filter available — use it when search returns the right word in the wrong kind of product. |
+| `category` | A K-Ruoka category **path prefix**, e.g. `hedelmat-ja-vihannekset`. The strongest filter available, and the one to reach for when search returns the right word in the wrong kind of product. |
 | `exclude` | Words that disqualify a product, e.g. `[luomu, maustettu]`. |
 | `ean` | Pin one exact product. Most precise, most brittle. |
 
@@ -96,7 +96,7 @@ Two top-level lists:
 ## How a product gets chosen
 
 1. Resolve the item name through the config, then through `config/aisle.conf` synonyms, then fall back to the name itself.
-2. Search K-Ruoka (cached 7 days).
+2. Search K-Ruoka (cached 7 days), scoped server-side to the entry's `category` when it has one. This matters because search truncates at 100 results: `lime` unscoped returns 2,180 matches, so the 100 seen were an arbitrary slice. Scoped to produce it returns a pool that is entirely in-category. An unrecognised path returns zero results rather than an error, so the search is retried unscoped and the category becomes a post-filter instead.
 3. Drop blocked categories — baby food, ready meals and pet food, which routinely match ingredient names and undercut the real product on price.
 4. Apply the entry's `category`, `brand` and `exclude` filters.
 5. Require every query term to appear in the product name. Long terms match as substrings, since Finnish compounds work that way; short ones must match a whole word, or `voi` (butter) matches `voileipäkeksi` (sandwich biscuit).
@@ -141,9 +141,11 @@ estimate-cost.py "shopping-lists/19.09.2026.md" --refresh
 # Machine-readable output as well
 estimate-cost.py "shopping-lists/19.09.2026.md" --json /tmp/estimate.json
 
-# Try a search term before adding it to the config
+# Try a search term before adding it to the config. Applies the same
+# relevance rule the estimator uses, so this previews what it would consider.
 estimate-cost.py lookup kanan rintafile
 estimate-cost.py lookup spagetti --brand Rummo
+estimate-cost.py lookup parmesaani --category maito-juusto-munat-ja-rasvat
 
 # See what is still unmapped, ranked by how often it appears
 estimate-cost.py coverage
@@ -195,6 +197,8 @@ This runs a real search for every proposal and prints the product each term actu
 - `liemikuutio` → nothing at all, while plain `liemi` works
 
 Fix the bad ones by adding `category` or `exclude`, and re-run the dry run until the matches look right.
+
+**Check a category path before relying on it.** `category` must be a real path prefix. `juusto` looks reasonable and matches nothing, because cheese lives under `maito-juusto-munat-ja-rasvat`. A wrong path is not an error — it silently falls back to the unscoped search, so you lose the scoping without being told. `lookup --category <path>` returning nothing is the signal.
 
 ### Step 4: Write
 
