@@ -27,8 +27,8 @@ Use this skill when:
 | `__cf_bm` cookie | Cloudflare bot management. Short-lived. |
 | User-Agent string | Must be replayed verbatim, or `cf_clearance` stops matching. |
 | `X-K-Build-Number` | Required header. A stale value gets HTTP 409 "client version is too old". |
-| `storeId` (e.g. `N131`) | So downstream tools price the store you actually shop at. Taken from your Plussa favourite once you are logged in. |
-| Store name | Cosmetic, so `status` reads "N131 (K‑Citymarket Espoo Sello)" rather than a bare code. |
+| `storeId` | So downstream tools price the store you actually shop at. Taken from your Plussa favourite once you are logged in. |
+| Store name | Cosmetic, so `status` reads `N123 (K-Citymarket Somewhere)` rather than a bare code. |
 
 The two Cloudflare cookies are optional — Cloudflare only issues `cf_clearance` when it actually challenges the browser, so a capture without it is normal.
 
@@ -51,9 +51,9 @@ A Chrome window opens at k-ruoka.fi. In that window:
 1. **Log in.** The profile is persistent, so after the first time you usually already are.
 2. Optionally search for a product, e.g. `maito`.
 
-You do **not** need to pick a store. Once you log in, the site loads the favourite store from your Plussa profile and the capture reads it from there. Verified live: a signed-out capture recorded `N106`, and signing in switched it to `N131` (K‑Citymarket Espoo Sello) with no store interaction at all.
+You do **not** need to pick a store. Once you log in, the site loads the favourite store from your Plussa profile and the capture reads it from there. Verified live: a signed-out capture recorded one store id, and signing in switched it to the account's favourite with no store interaction at all.
 
-Pass `--store-hint N131` if you want the capture to fail rather than silently record the wrong shop.
+Pass `--store-hint N123` if you want the capture to fail rather than silently record the wrong shop.
 
 The script polls in the background and closes the window itself once it has everything. It waits five minutes by default (`--timeout`).
 
@@ -93,17 +93,21 @@ kruoka-auth.py export-env > ~/.kruoka-env
 Credentials resolve in this order, and any one of the three is enough:
 
 1. **Environment variables** — the contract every consumer relies on.
-2. **A credentials file** — `~/.kruoka-env` by default, or wherever `KRUOKA_ENV_FILE` points.
+2. **A credentials file**, first match wins:
+   - `<repo root>/.kruoka-env` — checked first, so a sandboxed agent confined to its workspace can reach it
+   - `~/.kruoka-env`
+   - `KRUOKA_ENV_FILE` overrides both
 3. **The macOS Keychain** — a convenience for interactive use on this Mac.
 
 **Environment variables are the contract.** Any consumer should read these and nothing else:
 
 ```
-KRUOKA_SESSION  KRUOKA_CF_CLEARANCE  KRUOKA_CF_BM
-KRUOKA_USER_AGENT  KRUOKA_BUILD_NUMBER  KRUOKA_STORE_ID  KRUOKA_CAPTURED_AT
+KRUOKA_SESSION       KRUOKA_CF_CLEARANCE  KRUOKA_CF_BM
+KRUOKA_USER_AGENT    KRUOKA_BUILD_NUMBER  KRUOKA_STORE_ID
+KRUOKA_STORE_NAME    KRUOKA_CAPTURED_AT
 ```
 
-The Keychain is only a convenience for interactive use on this Mac. `kruoka-auth.py` resolves environment variables first and falls back to the Keychain second, so the same code runs unchanged somewhere without a Keychain.
+The Keychain is only a convenience for interactive use on macOS. `kruoka-auth.py` tries the environment, then a credentials file, then the Keychain, so the same code runs unchanged on a host that has none of the latter two.
 
 ### Handing credentials to a headless agent
 
@@ -155,6 +159,33 @@ That last point means an ordinary HTTP client can be accepted on one host and re
 
 **A Cloudflare challenge from a second machine is not a stale-credentials problem.** Check whether the same credentials still validate from the Mac before re-capturing: if they do, the difference is the client, not the cookies.
 
+## Requirements and portability
+
+Read this first if you are adopting the skill into another repo.
+
+| Needs | Why |
+|---|---|
+| `uv` on PATH | The script's shebang is `#!/usr/bin/env -S uv run --script`, and dependencies are declared inline (PEP 723). Nothing to pip-install; uv resolves and caches on first run. |
+| Google Chrome installed | Playwright drives the real browser via `channel="chrome"`, so no bundled Chromium is downloaded. |
+| macOS, for the Keychain only | `capture` and Keychain storage are macOS-only. Everything downstream reads environment variables or a credentials file, so consumers run anywhere. |
+
+Two assumptions to check when relocating the file:
+
+- **`REPO_ROOT` is derived as `Path(__file__).resolve().parents[3]`**, which assumes the script sits at `<repo>/.claude/skills/kruoka-auth/kruoka-auth.py`. Move it to a different depth and the repo-root credentials-file lookup points somewhere wrong. Adjust that constant.
+- **The ignore rules live in the consuming repo's `.gitignore`, not in the skill folder.** Copying the skill alone will not bring them. Add:
+
+  ```
+  .claude/skills/kruoka-auth/.profile/
+  .claude/skills/kruoka-auth/.profile.lock
+  *.kruoka-env
+  ```
+
+  The first is a real Chrome profile holding a live logged-in session, roughly 30 MB. Committing it would publish the account.
+
+The API details this was reverse-engineered against — endpoints, headers, the
+`X-K-Build-Number` behaviour — are documented separately in Feaston's
+`.agents/skills/kruoka-api/SKILL.md`.
+
 ## Defaults and constraints
 
 - **Manual login only.** The script never fills in credentials. Do not add form-filling — it would put the password through the automation and would break on MFA and Cloudflare anyway.
@@ -172,7 +203,8 @@ That last point means an ordinary HTTP client can be accepted on one host and re
 | "the session is still anonymous" | The window was open but you never logged in. A guest session is not enough. | Run `capture` again and complete the login. |
 | "the session is anonymous" on validate | Stored credentials are a guest session. | Run `capture` again and log in. |
 | "No `/kr-api/` call was seen" | The page never talked to the API. | Run `capture` again and search for a product before the window closes. |
-| "Cloudflare challenged the request" | `cf_clearance` is stale or the UA does not match. | Run `capture` again and solve the challenge in the window. |
+| "Cloudflare challenged the request", **on the capturing machine** | `cf_clearance` is stale. | Run `capture` again and solve the challenge in the window. |
+| "Cloudflare challenged the request", **on another host** | Almost certainly the TLS fingerprint, not the cookies. | Check the same credentials still validate on the capturing machine first. If they do, re-capturing will not help — see *What `cf_clearance` is actually bound to*. |
 | HTTP 401/403 on validation | Session expired. | Run `capture` again. |
 | "Build number … is stale" | The site shipped a new build. | Run `capture` again; the new build is picked up automatically. |
 | "Could not launch Chrome" | Chrome missing, or a capture is already running. | Close the other window, or install Google Chrome. |
