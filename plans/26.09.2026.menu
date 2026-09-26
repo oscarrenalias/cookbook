@@ -1,0 +1,24 @@
+---
+servings: 5
+---
+
+==Sat==
+@./Pizza/Pizza{5%servings}
+
+==Sun==
+@./Fish/Blackened Salmon{5%servings}
+
+==Mon==
+@./Meat/Pork Stir Fry{5%servings}
+
+==Tue==
+@./Meat/Chicken Noodles{5%servings}
+
+==Wed==
+@./Meat/Roasted Pork{5%servings}
+
+==Thu==
+@./Pasta/Pasta with Sausage{5%servings}
+
+==Fri==
+@./Pasta/Conchiglie Pasta with Tomato and Mozzarella{5%servings}
